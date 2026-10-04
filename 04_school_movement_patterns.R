@@ -47,7 +47,7 @@ p4a <- ggplot() +
   geom_segment(data = mm, aes(lon, lat, xend = lon_end, yend = lat_end, colour = speed_lm),
                arrow = arrow(length = unit(1.5, "mm")), linewidth = 0.7) +
   scale_colour_viridis_c(option = "plasma", name = "Speed (m/s)") +
-  coord_quickmap() +
+  map_coord(c(ship$lon, mm$lon), c(ship$lat, mm$lat)) +
   labs(x = "Longitude", y = "Latitude",
        title = "School movement vectors (arrow = distance swum in 10 min)",
        subtitle = "Grey = ship track; dark lines = smoothed school tracks; red dashed = tow lines")
@@ -64,8 +64,7 @@ print(stats)
 fwrite(stats, file.path(cfg$out_dir, "movement_circular_stats.csv"))
 
 rose <- function(d, facet, st) {
-  lab <- st[, setNames(sprintf("%s
-n=%d, mean=%.0f deg, Rbar=%.2f, p=%.2g",
+  lab <- st[, setNames(sprintf("%s\nn=%d, mean=%.0f deg, Rbar=%.2f, p=%.2g",
                                sub(".*: ", "", group), n, mean_dir, Rbar, rayleigh_p),
                        sub(".*: ", "", group))]
   ggplot(d, aes(bearing_lm)) +
@@ -121,7 +120,7 @@ p4d <- ggplot(grid) +
                arrow = arrow(length = unit(1.5, "mm"))) +
   scale_fill_viridis_c(name = "Schools", option = "mako", direction = -1) +
   scale_linewidth(range = c(0.2, 1.2), limits = c(0, 1), name = "Rbar") +
-  coord_quickmap() +
+  map_coord(c(ship$lon, mm$lon), c(ship$lat, mm$lat)) +
   labs(x = "Longitude", y = "Latitude",
        title = sprintf("Mean school movement per %s km cell", grid_km),
        subtitle = "Arrow = mean velocity (relative length); thick = schools agree on direction")

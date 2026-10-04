@@ -60,13 +60,25 @@ cfg <- list(
   # sonar <-> haul matching
   pre_shoot_h   = 2,         # hours of searching before shoot to include
   buffer_km     = 5,         # max distance of school from the tow track
-  default_vert_opening = 30  # m, used when vert_opening is NA
+  default_vert_opening = 30, # m, used when vert_opening is NA
+
+  # map display (plots only -- does not remove data from any analysis)
+  map_lat_min   = 60.12      # southern limit of sonar maps; NULL = no limit
 )
 dir.create(cfg$out_dir, showWarnings = FALSE, recursive = TRUE)
 
 species_cols <- c(her = "#1f77b4", mac = "#2ca02c", whb = "#9467bd",
                   hom = "#ff7f0e", boc = "#8c564b", had = "#e377c2",
                   pok = "#7f7f7f")
+
+# Map coordinates for the sonar zoom maps, cropped at cfg$map_lat_min.
+# Pass the lon/lat of everything drawn so the view fits the remaining area.
+map_coord <- function(lon, lat, lat_min = cfg$map_lat_min) {
+  if (is.null(lat_min)) return(coord_quickmap())
+  keep <- !is.na(lat) & lat >= lat_min
+  coord_quickmap(xlim = range(lon[keep], na.rm = TRUE),
+                 ylim = c(lat_min, max(lat[keep], na.rm = TRUE)))
+}
 
 theme_set(theme_bw(base_size = 11) +
             theme(panel.grid.minor = element_blank(),

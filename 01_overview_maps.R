@@ -73,7 +73,7 @@ p1c <- ggplot() +
                       name = "Ship activity") +
   scale_fill_viridis_c(direction = -1, name = "School\ndepth (m)") +
   scale_size_area(max_size = 6, name = "School\narea (m2)") +
-  coord_quickmap() +
+  map_coord(c(ship$lon, schools$lon), c(ship$lat, schools$lat)) +
   labs(x = "Longitude", y = "Latitude",
        title = "Sonar track and detected schools (school mean positions)",
        subtitle = paste("search =", cfg$pre_shoot_h,
