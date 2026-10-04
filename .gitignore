@@ -1,0 +1,14 @@
+# RStudio / R session files
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+
+# Generated figures/tables (derived from commercial catch + sonar data; regenerate with scripts)
+output/
+
+# Never commit raw data
+*.csv
+*.txt
+*.rds
+!README.md
