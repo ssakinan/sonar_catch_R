@@ -17,3 +17,7 @@ Caveats found in the October 2025 sample:
 - `Center.dep` = range x sin(|tilt|) exactly (R² = 1). It is the beam-centre depth, not a measured school depth.
 - Raw ping-to-ping centroid noise is ~4–5 m per axis (it grows with range). Raw speeds are meaningless; smoothed speeds stabilise for tau ≥ 20–30 s.
 - Catch-file times are UTC. Profos `Ship.speed` is in m/s.
+
+Extra scripts:
+- `05_report.R` rebuilds the Word report (`output/SCH302_sonar_catch_report.docx`). It re-runs 01–04 without plot titles, so the captions go below each figure.
+- `06_school_animation.R` makes MP4 animations (`output/animation/`) of all smoothed school tracks, with every school starting at t = 0. It writes two views: a common start point, and the observed positions with movement exaggerated. It needs ffmpeg on the PATH and takes about 4 minutes per view.
