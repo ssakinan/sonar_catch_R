@@ -65,6 +65,10 @@ cfg <- list(
   # map display (plots only -- does not remove data from any analysis)
   map_lat_min   = 60.12      # southern limit of sonar maps; NULL = no limit
 )
+# Report mode (set by 05_report.R): figures without titles/subtitles, since the
+# Word report carries them as captions below each figure.
+report_mode <- identical(Sys.getenv("SONAR_REPORT"), "1")
+if (report_mode) cfg$out_dir <- file.path(cfg$out_dir, "report_figs")
 dir.create(cfg$out_dir, showWarnings = FALSE, recursive = TRUE)
 
 species_cols <- c(her = "#1f77b4", mac = "#2ca02c", whb = "#9467bd",
@@ -83,6 +87,7 @@ map_coord <- function(lon, lat, lat_min = cfg$map_lat_min) {
 theme_set(theme_bw(base_size = 11) +
             theme(panel.grid.minor = element_blank(),
                   strip.background = element_rect(fill = "grey92")))
+if (report_mode) theme_update(plot.title = element_blank(), plot.subtitle = element_blank())
 
 # ------------------------------------------------------------------------------
 # Readers
