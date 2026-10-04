@@ -38,7 +38,8 @@ heading_up     <- FALSE   # follow view: rotate so the bow points up
 show_history   <- TRUE    # map view: keep earlier schools as small grey dots
 sonar_range_m  <- 600     # radius of the sonar-range circle drawn around the vessel
 n_cores        <- max(1, min(12, parallel::detectCores(logical = FALSE) - 2))
-width_px <- 1400; height_px <- 1200; res <- 150
+show_legend <- FALSE      # TRUE: show colour (speed) and size (area) legends
+width_px <- if (show_legend) 1400 else 1150; height_px <- 1200; res <- 150
 ffmpeg   <- "ffmpeg"
 
 anim_dir <- file.path(cfg$out_dir, "animation")
@@ -145,7 +146,8 @@ draw_map <- function(i) {
          subtitle = sprintf(paste0("Schools appear at real detection time/position; their tracks play %dx slower ",
                                    "and movement is exaggerated %dx. Dashed circle = %d m sonar range."),
                             school_stretch, exaggerate_map, sonar_range_m)) +
-    theme(plot.title = element_text(face = "bold"), plot.subtitle = element_text(size = 8))
+    theme(legend.position = if (show_legend) "right" else "none",
+          plot.title = element_text(face = "bold"), plot.subtitle = element_text(size = 8))
 }
 
 # ---- follow view ---------------------------------------------------------------------------------
@@ -180,7 +182,8 @@ draw_follow <- function(i) {
                                    "Rings: 200, 400, %d m."),
                             if (heading_up) " (heading up)" else " (north up)",
                             school_stretch, exaggerate_follow, sonar_range_m)) +
-    theme(plot.title = element_text(face = "bold"), plot.subtitle = element_text(size = 8))
+    theme(legend.position = if (show_legend) "right" else "none",
+          plot.title = element_text(face = "bold"), plot.subtitle = element_text(size = 8))
 }
 ship_bg_f <- ship[seq(1, .N, 3)]
 

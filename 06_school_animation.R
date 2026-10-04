@@ -27,7 +27,8 @@ moving_only    <- FALSE      # TRUE: only schools with significant movement
 colour_by      <- "speed"    # "speed", "sun" or "phase"
 map_exaggerate <- 25         # displacement multiplier in the map view
 make_gif       <- FALSE
-width_px <- 1400; height_px <- 1200; res <- 150
+show_legend <- FALSE      # TRUE: show colour (speed) and size (area) legends
+width_px <- if (show_legend) 1400 else 1150; height_px <- 1200; res <- 150
 ffmpeg   <- "ffmpeg"         # or full path, e.g. "C:/ffmpeg/bin/ffmpeg.exe"
 
 anim_dir <- file.path(cfg$out_dir, "animation")
@@ -67,7 +68,8 @@ size_scale <- scale_size_area(max_size = 5, limits = range(mov$Area), name = "Sc
 
 # ---- frame builder ---------------------------------------------------------------------------
 draw_frame <- function(tnow, view) {
-  trail <- grid[t <= tnow & t >= tnow - trail_s][, if (.N > 1) .SD, by = sid]
+  trail <- grid[t <= tnow & t >= tnow - trail_s]
+  trail <- trail[sid %in% trail[, .N, by = sid][N > 1, sid]]   # paths need >= 2 points; keeps columns if empty
   heads <- grid[t <= tnow, .SD[.N], by = sid]          # current (or final) position
   # schools whose track has ended stay as faded points at their final position
   heads[, alpha := ifelse(tnow > t_end, pmax(0.15, 1 - (tnow - t_end) / 10), 1)]
@@ -101,7 +103,7 @@ draw_frame <- function(tnow, view) {
                               tnow, sum(heads$alpha == 1)))
   }
   p + colour_scale + size_scale + scale_alpha_identity() +
-    theme(legend.position = "right", plot.title = element_text(face = "bold"))
+    theme(legend.position = if (show_legend) "right" else "none", plot.title = element_text(face = "bold"))
 }
 
 # map background + fixed extent (all positions incl. exaggerated movement)
