@@ -39,8 +39,15 @@ show_history   <- TRUE    # map view: keep earlier schools as small grey dots
 sonar_range_m  <- 600     # radius of the sonar-range circle drawn around the vessel
 n_cores        <- max(1, min(12, parallel::detectCores(logical = FALSE) - 2))
 show_legend <- FALSE      # TRUE: show colour (speed) and size (area) legends
-width_px <- if (show_legend) 1400 else 1150; height_px <- 1200; res <- 150
+skip_no_school_m <- NA    # e.g. 1000: jump over periods with no school shown within this many m of the vessel
+skip_pad_frames  <- 5     # with skipping: frames kept before/after each school encounter
 ffmpeg   <- "ffmpeg"
+
+# Override any setting without editing this file, e.g.
+#   anim_settings <- list(views = "follow", skip_no_school_m = 1000)
+#   source("07_vessel_school_animation.R")
+if (exists("anim_settings")) list2env(anim_settings, envir = environment())
+width_px <- if (show_legend) 1400 else 1150; height_px <- 1200; res <- 150
 
 anim_dir <- file.path(cfg$out_dir, "animation")
 dir.create(anim_dir, showWarnings = FALSE, recursive = TRUE)
@@ -114,9 +121,35 @@ phase_cols <- c(search = "orange", tow = "red", other = "grey30")
 frame_label <- function(i, v) {
   st <- if (ph$phase[i] == "other") "" else sprintf("   |   %s %s",
           toupper(ph$phase[i]), sub(".*-", "haul ", ph$haul_id[i]))
-  sprintf("%s UTC   |   vessel %.1f kn%s",
+  sprintf("%s UTC   |   vessel %.1f kn%s%s",
           format(as.POSIXct(frames[i], origin = "1970-01-01", tz = "UTC"), "%d %b %H:%M"),
-          v$speed / 0.514444, st)
+          v$speed / 0.514444, st, skip_note[i])
+}
+
+# ---- optional: jump over periods without schools near the vessel ---------------------------------
+skip_note <- rep("", length(frames)); file_suffix <- ""
+if (!is.na(skip_no_school_m)) {
+  near <- vapply(seq_along(frames), function(i) {
+    ss <- school_state(frames[i])
+    if (is.null(ss$heads)) return(FALSE)
+    v <- vessel_at(frames[i])
+    h <- place_lonlat(copy(ss$heads), exaggerate_follow)   # positions as drawn in the follow view
+    xy <- to_xy(h$lon, h$lat, v$lon, v$lat)
+    any(sqrt(xy[, 1]^2 + xy[, 2]^2) <= skip_no_school_m)
+  }, logical(1))
+  keep <- near
+  for (k in seq_len(skip_pad_frames)) keep <- keep | shift(near, k, fill = FALSE) | shift(near, -k, fill = FALSE)
+  gap <- c(0, diff(frames[keep]))
+  frames <- frames[keep]; ph <- ph[keep]
+  skip_note <- rep("", length(frames))
+  for (j in which(gap > 1.5 * clock_step_s)) {
+    skip_note[j:min(j + 2 * fps - 1, length(frames))] <-          # show for 2 s of video
+      sprintf("   |   >> skipped %s", if (gap[j] >= 3600) sprintf("%.1f h", gap[j] / 3600)
+                                     else sprintf("%.0f min", gap[j] / 60))
+  }
+  file_suffix <- sprintf("_skip%dm", skip_no_school_m)
+  message(sprintf("Skipping: %d of %d frames kept (school within %d m), %d jumps",
+                  sum(keep), length(keep), skip_no_school_m, sum(gap > 1.5 * clock_step_s)))
 }
 
 # ---- map view ----------------------------------------------------------------------------------
@@ -179,9 +212,12 @@ draw_follow <- function(i) {
          y = if (heading_up) "Ahead (m)" else "North of vessel (m)",
          title = frame_label(i, v),
          subtitle = sprintf(paste0("Vessel-centred view%s. School tracks play %dx slower, movement exaggerated %dx. ",
-                                   "Rings: 200, 400, %d m."),
+                                   "Rings: 200, 400, %d m.%s"),
                             if (heading_up) " (heading up)" else " (north up)",
-                            school_stretch, exaggerate_follow, sonar_range_m)) +
+                            school_stretch, exaggerate_follow, sonar_range_m,
+                            if (is.na(skip_no_school_m)) "" else
+                              sprintf("\nPeriods without schools within %d m of the vessel are skipped.",
+                                      skip_no_school_m))) +
     theme(legend.position = if (show_legend) "right" else "none",
           plot.title = element_text(face = "bold"), plot.subtitle = element_text(size = 8))
 }
@@ -212,7 +248,7 @@ for (view in views) {
     parallel::stopCluster(cl)
   } else invisible(lapply(chunks, render_chunk))
 
-  mp4 <- normalizePath(file.path(anim_dir, sprintf("vessel_schools_%s.mp4", view)), mustWork = FALSE)
+  mp4 <- normalizePath(file.path(anim_dir, sprintf("vessel_schools_%s%s.mp4", view, file_suffix)), mustWork = FALSE)
   status <- system2(ffmpeg, c("-y", "-loglevel", "error", "-framerate", fps,
                               "-i", shQuote(file.path(fdir, "f_%05d.png")),
                               "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "21",
