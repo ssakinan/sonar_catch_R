@@ -29,6 +29,7 @@ Without `sonar_profile` (or the `SONAR_PROFILE` environment variable) the SU90 p
 | `05b_report_ST90.R` | Word report, ST90 (incl. QC) | `output_ST90/SCH302_ST90_sonar_catch_report.docx` |
 | `06_school_animation.R` | all smoothed tracks from a common start time | `animation/schools_*.mp4` |
 | `07_vessel_school_animation.R` | vessel and schools in real time | `animation/vessel_schools_*.mp4` (one per day for multi-day data) |
+| `08_daytime_migration.R` | is there a migration signal in daytime movement? (net drift after removing tide and vessel effect) | `migration/` figures 08a–08f, `08_migration_summary.png`, `08_daytime_flow.mp4`, `SCH302_ST90_daytime_migration.docx`, estimate tables |
 
 The report scripts re-run the analysis scripts without plot titles, so the captions go below each figure (`SKIP_FIGURES=1` reuses existing figures).
 

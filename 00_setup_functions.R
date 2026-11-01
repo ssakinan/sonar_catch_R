@@ -531,7 +531,7 @@ render_frames <- function(draw, n, fdir, width_px, height_px, res = 150,
   if (n_cores > 1) {
     cl <- parallel::makeCluster(n_cores)
     on.exit(parallel::stopCluster(cl))
-    parallel::clusterEvalQ(cl, suppressPackageStartupMessages({ library(data.table); library(ggplot2) }))
+    parallel::clusterEvalQ(cl, suppressPackageStartupMessages({ library(data.table); library(ggplot2); library(patchwork) }))
     parallel::clusterExport(cl, ls(globalenv()), envir = globalenv())
     plot_theme <- theme_get()            # workers start with ggplot's default theme
     parallel::clusterExport(cl, "plot_theme", envir = environment())
