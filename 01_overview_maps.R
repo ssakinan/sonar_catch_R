@@ -14,9 +14,8 @@ source("00_setup_functions.R")   # run from the RStudio project root
 library(sf)
 
 hauls <- read_catch(cfg$catch_file, trips = cfg$trip)
-ppe   <- read_profos(cfg$profos_dir, "ppe")
-pp    <- merge_pp(read_profos(cfg$profos_dir, "pp"))
-ship  <- ship_track(ppe)
+pp    <- merge_pp(apply_school_qc(read_profos(cfg$profos_dir, "pp")))
+ship  <- read_ship()
 ship  <- cbind(ship, label_phase(ship$t, hauls))
 schools <- school_summary(pp)
 

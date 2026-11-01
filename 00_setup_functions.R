@@ -61,10 +61,51 @@ cfg <- list(
   pre_shoot_h   = 2,         # hours of searching before shoot to include
   buffer_km     = 5,         # max distance of school from the tow track
   default_vert_opening = 30, # m, used when vert_opening is NA
+  catch_offset_h = 0,        # hours added to catch-file shoot/haul times to match the sonar clock
 
   # map display (plots only -- does not remove data from any analysis)
-  map_lat_min   = 60.12      # southern limit of sonar maps; NULL = no limit
+  map_lat_min   = 60.12,     # southern limit of sonar maps; NULL = no limit
+  grid_km       = 1,         # cell size of the gridded movement field (04d)
+
+  # outlier / unrealistic-school exclusion (00b_school_qc.R); NULL = no exclusion
+  qc = NULL
 )
+
+# ------------------------------------------------------------------------------
+# Sonar profiles. Choose one BEFORE sourcing any script, e.g. in the console:
+#   sonar_profile <- "ST90"; source("01_overview_maps.R")
+# or set the environment variable SONAR_PROFILE. Default: SU90.
+# Each profile overrides only the settings that differ from the list above.
+# ------------------------------------------------------------------------------
+profiles <- list(
+  SU90 = list(label = "SU90"),
+  ST90 = list(
+    label        = "ST90",
+    profos_dir   = "D:/SONAR/Reports/profos/ST90June2026",
+    trip         = "2026E",
+    out_dir      = "output_ST90",
+    map_lat_min  = NULL,
+    grid_km      = 2,
+    catch_offset_h = 1,   # ship track passes logged shoot/haul positions at +1 h (median 0.6 / 0.9 km)
+    gap_s        = 600,   # no ppe export: track comes from pings WITH schools, so
+                          # allow longer gaps before treating the sonar as off
+    qc = list(            # thresholds chosen from the ST90 June-July 2026 data
+      ping_sv_min    = -70,   # drop pings with Sv below this (dB)
+      ping_tilt_max  = -3,    # drop near-horizontal pings (tilt -2, -1 deg): surface echoes
+      school_sv_min  = -60,   # school mean Sv below this: too weak for a herring school
+      range_min      = 150,   # school mean range below this (m): near-field, wake, surface
+      speed_max      = 2.5,   # smoothed speed above this (m/s): not a herring school
+      ship_hd_max    = 20,    # "moves with the ship": heading within this many degrees of the ship's,
+      ship_frac      = 0.5,   #   speed > this fraction of ship speed, while the ship steams
+      ship_speed_min = 3,     #   faster than this (m/s)
+      jump_max       = 30,    # step between consecutive cleaned pings faster than this (m/s): tracker jump
+      area_z_max     = 4      # |robust z| of log school area above this
+    ))
+)
+if (!exists("sonar_profile")) sonar_profile <- Sys.getenv("SONAR_PROFILE", "SU90")
+if (!sonar_profile %in% names(profiles)) stop("Unknown sonar_profile: ", sonar_profile)
+cfg <- modifyList(cfg, profiles[[sonar_profile]])
+
 # Report mode (set by 05_report.R): figures without titles/subtitles, since the
 # Word report carries them as captions below each figure.
 report_mode <- identical(Sys.getenv("SONAR_REPORT"), "1")
@@ -102,7 +143,20 @@ read_profos <- function(dir, type = c("pp", "ps", "ppe")) {
   if (!length(files)) stop("No *-", type, ".txt files in ", dir)
 
   dt <- rbindlist(lapply(files, function(f) {
-    x <- fread(f, na.strings = "N/A", fill = TRUE)
+    if (type == "ps") {
+      x <- fread(f, na.strings = "N/A", fill = TRUE)
+    } else {
+      # The File column can contain spaces (e.g. "Sch302 E 2026-D2026...nc/0"),
+      # which breaks whitespace-separated reading: replace them before parsing.
+      L <- readLines(f)
+      pat <- "^(\\s*\\S+\\s+\\S+\\s+\\S+\\s+)(.*?\\.nc/[0-9]+)(\\s.*)$"
+      body <- L[-1]
+      hit <- grepl(pat, body, perl = TRUE)
+      body[hit] <- paste0(sub(pat, "\\1", body[hit], perl = TRUE),
+                          gsub(" ", "_", sub(pat, "\\2", body[hit], perl = TRUE)),
+                          sub(pat, "\\3", body[hit], perl = TRUE))
+      x <- fread(text = c(L[1], body), na.strings = "N/A", fill = TRUE)
+    }
     x[, run := sub(paste0("-", type, "\\.txt$"), "", basename(f))]
     x
   }), fill = TRUE)
@@ -146,6 +200,8 @@ read_catch <- function(file, trips = NULL) {
   hauls[, `:=`(vert_opening = as.numeric(vert_opening),
                headline_depth = as.numeric(headline_depth))]
   hauls[is.na(vert_opening), vert_opening := cfg$default_vert_opening]
+  if (cfg$catch_offset_h != 0) hauls[, `:=`(shoot_time = shoot_time + cfg$catch_offset_h * 3600,
+                                            haul_time  = haul_time  + cfg$catch_offset_h * 3600)]
   hauls[, haul_id := paste(trip, haul, sep = "-")]
   setorder(hauls, shoot_time)
   hauls[]
@@ -168,6 +224,38 @@ ship_track <- function(ppe, gap_s = cfg$gap_s) {
                                     cbind(lon[-1], lat[-1])))]
   sh[is.na(dt) | dt > gap_s, `:=`(dist_m = 0, dt = NA_real_)]
   sh[]
+}
+
+# Ship track for the current profile: from the ppe export when there is one
+# (all pings), otherwise from the pp export (only pings that detected a school;
+# effort is then approximate -- see cfg$gap_s).
+read_ship <- function() {
+  has_ppe <- length(list.files(cfg$profos_dir, pattern = "-ppe\\.txt$", recursive = TRUE)) > 0
+  if (!has_ppe) message("No ppe export in ", cfg$profos_dir, ": ship track taken from pp (pings with schools)")
+  ship_track(read_profos(cfg$profos_dir, if (has_ppe) "ppe" else "pp"))
+}
+
+# ------------------------------------------------------------------------------
+# Outlier / unrealistic-school exclusion (thresholds in cfg$qc)
+# ------------------------------------------------------------------------------
+
+# Ping-level rules applied to raw pp rows (before merging per ping).
+qc_pings <- function(pp, q = cfg$qc) {
+  if (is.null(q)) return(pp)
+  pp[is.na(Id) | (Sv.mean >= q$ping_sv_min & Trans.tilt <= q$ping_tilt_max)]
+}
+
+# Drop pings and schools excluded by 00b_school_qc.R. Run that script first;
+# without cfg$qc (e.g. SU90) this returns pp unchanged.
+apply_school_qc <- function(pp) {
+  if (is.null(cfg$qc)) return(pp)
+  f <- file.path(sub("/report_figs$", "", cfg$out_dir), "school_qc.csv")
+  if (!file.exists(f)) stop("Run 00b_school_qc.R first (", f, " not found)")
+  qc <- fread(f)
+  n0 <- uniqueN(pp[!is.na(Id)]$sid)
+  pp <- qc_pings(pp)[is.na(Id) | !sid %in% qc[excluded == TRUE, sid]]
+  message(sprintf("QC: %d of %d schools kept", uniqueN(pp[!is.na(Id)]$sid), n0))
+  pp
 }
 
 # Label each ping (or any time vector) with the haul it belongs to and phase:
@@ -420,4 +508,46 @@ interval_velocity <- function(k, interval_s = cfg$interval_s) {
       bearing = bearing_of(fx, fy), lon = mean(lon_kf), lat = mean(lat_kf),
       depth = mean(depth))
   }, by = int]
+}
+
+# ------------------------------------------------------------------------------
+# Animation helpers (06, 07)
+# ------------------------------------------------------------------------------
+
+# Render frames 1..n in parallel: draw(k) must return a ggplot for frame k.
+# Objects in the global environment are copied to the worker processes.
+render_frames <- function(draw, n, fdir, width_px, height_px, res = 150,
+                          n_cores = max(1, min(12, parallel::detectCores(logical = FALSE) - 2))) {
+  unlink(fdir, recursive = TRUE); dir.create(fdir, recursive = TRUE)
+  chunk <- function(idx) {
+    for (k in idx) {
+      ragg::agg_png(file.path(fdir, sprintf("f_%05d.png", k)), width = width_px, height = height_px, res = res)
+      print(draw(k)); dev.off()
+    }
+    length(idx)
+  }
+  n_cores <- min(n_cores, n)
+  chunks <- split(seq_len(n), cut(seq_len(n), n_cores, labels = FALSE))
+  if (n_cores > 1) {
+    cl <- parallel::makeCluster(n_cores)
+    on.exit(parallel::stopCluster(cl))
+    parallel::clusterEvalQ(cl, suppressPackageStartupMessages({ library(data.table); library(ggplot2) }))
+    parallel::clusterExport(cl, ls(globalenv()), envir = globalenv())
+    plot_theme <- theme_get()            # workers start with ggplot's default theme
+    parallel::clusterExport(cl, "plot_theme", envir = environment())
+    parallel::clusterEvalQ(cl, theme_set(plot_theme))
+    invisible(parallel::parLapply(cl, chunks, chunk))
+  } else invisible(lapply(chunks, chunk))
+}
+
+# Join f_00001.png ... into an MP4 with ffmpeg.
+encode_mp4 <- function(fdir, mp4, fps, ffmpeg = "ffmpeg", crf = 21) {
+  mp4 <- normalizePath(mp4, mustWork = FALSE)
+  status <- system2(ffmpeg, c("-y", "-loglevel", "error", "-framerate", fps,
+                              "-i", shQuote(file.path(fdir, "f_%05d.png")),
+                              "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", crf,
+                              "-vf", shQuote("scale=trunc(iw/2)*2:trunc(ih/2)*2"), shQuote(mp4)))
+  if (status != 0) stop("ffmpeg failed for ", mp4)
+  message("Written: ", mp4)
+  invisible(mp4)
 }

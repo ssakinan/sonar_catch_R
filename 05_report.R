@@ -33,9 +33,9 @@ out_docx <- file.path(dirname(fig_dir), "SCH302_sonar_catch_report.docx")
 
 # ---- numbers for the text ---------------------------------------------------------
 hauls <- read_catch(cfg$catch_file, trips = cfg$trip)
-ship  <- ship_track(read_profos(cfg$profos_dir, "ppe"))
-pp    <- read_profos(cfg$profos_dir, "pp")
-ind   <- fread(file.path(fig_dir, "haul_sonar_indices.csv"))
+ship  <- read_ship()
+pp    <- apply_school_qc(read_profos(cfg$profos_dir, "pp"))
+ind   <- fread(file.path(fig_dir, "haul_sonar_indices.csv"), colClasses = list(character = "haul_id"))  # "2026E-41" would parse as a number
 mov   <- fread(file.path(fig_dir, "school_movement.csv"))
 cst   <- fread(file.path(fig_dir, "movement_circular_stats.csv"))
 mm    <- mov[moving == TRUE]

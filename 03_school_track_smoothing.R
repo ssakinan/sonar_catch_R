@@ -25,7 +25,7 @@
 
 source("00_setup_functions.R")   # run from the RStudio project root
 
-pp <- merge_pp(read_profos(cfg$profos_dir, "pp"))
+pp <- merge_pp(apply_school_qc(read_profos(cfg$profos_dir, "pp")))
 ps <- read_profos(cfg$profos_dir, "ps")
 
 # ---- 1. QC: keep schools with enough pings / duration ----------------------------

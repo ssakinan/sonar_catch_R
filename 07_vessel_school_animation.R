@@ -41,6 +41,7 @@ n_cores        <- max(1, min(12, parallel::detectCores(logical = FALSE) - 2))
 show_legend <- FALSE      # TRUE: show colour (speed) and size (area) legends
 skip_no_school_m <- NA    # e.g. 1000: jump over periods with no school shown within this many m of the vessel
 skip_pad_frames  <- 5     # with skipping: frames kept before/after each school encounter
+split_by_day     <- NA    # one video per day; NA = automatically when the data span > 1.5 days
 ffmpeg   <- "ffmpeg"
 
 # Override any setting without editing this file, e.g.
@@ -54,7 +55,7 @@ dir.create(anim_dir, showWarnings = FALSE, recursive = TRUE)
 
 # ---- data ---------------------------------------------------------------------------------
 hauls  <- read_catch(cfg$catch_file, trips = cfg$trip)
-ship   <- ship_track(read_profos(cfg$profos_dir, "ppe"))
+ship   <- read_ship()
 tracks <- readRDS(file.path(cfg$out_dir, "school_tracks.rds"))[keep == TRUE]
 mov    <- fread(file.path(cfg$out_dir, "school_movement.csv"))
 
@@ -224,35 +225,18 @@ draw_follow <- function(i) {
 ship_bg_f <- ship[seq(1, .N, 3)]
 
 # ---- render (parallel) + encode ------------------------------------------------------------------
+fday <- as.character(as.Date(as.POSIXct(frames, origin = "1970-01-01", tz = "UTC")))
+by_day <- if (is.na(split_by_day)) diff(range(frames)) > 1.5 * 86400 else split_by_day
+if (!by_day) fday[] <- ""
 for (view in views) {
-  fdir <- file.path(tempdir(), paste0("frames_vessel_", view))
-  unlink(fdir, recursive = TRUE); dir.create(fdir)
-  draw <- if (view == "map") draw_map else draw_follow
-  render_chunk <- function(idx) {
-    for (i in idx) {
-      ragg::agg_png(file.path(fdir, sprintf("f_%05d.png", i)), width = width_px, height = height_px, res = res)
-      print(draw(i)); dev.off()
-    }
-    length(idx)
+  for (d in unique(fday)) {
+    idx_day <- which(fday == d)
+    draw_k  <- function(k) if (view == "map") draw_map(idx_day[k]) else draw_follow(idx_day[k])
+    fdir <- file.path(tempdir(), paste0("frames_vessel_", view))
+    message(sprintf("Rendering %d frames for view '%s'%s ...", length(idx_day), view,
+                    if (nzchar(d)) paste0(", ", d) else ""))
+    render_frames(draw_k, length(idx_day), fdir, width_px, height_px, res, n_cores)
+    encode_mp4(fdir, file.path(anim_dir, sprintf("vessel_schools_%s%s%s.mp4", view, file_suffix,
+                                                 if (nzchar(d)) paste0("_", d) else "")), fps, ffmpeg)
   }
-  message(sprintf("Rendering %d frames for view '%s' on %d cores ...", length(frames), view, n_cores))
-  chunks <- split(seq_along(frames), cut(seq_along(frames), n_cores, labels = FALSE))
-  if (n_cores > 1) {
-    cl <- parallel::makeCluster(n_cores)
-    parallel::clusterEvalQ(cl, suppressPackageStartupMessages({ library(data.table); library(ggplot2) }))
-    parallel::clusterExport(cl, setdiff(ls(globalenv()), "cl"), envir = globalenv())
-    plot_theme <- theme_get()                       # workers start with ggplot's default theme
-    parallel::clusterExport(cl, "plot_theme", envir = environment())
-    parallel::clusterEvalQ(cl, theme_set(plot_theme))
-    invisible(parallel::parLapply(cl, chunks, render_chunk))
-    parallel::stopCluster(cl)
-  } else invisible(lapply(chunks, render_chunk))
-
-  mp4 <- normalizePath(file.path(anim_dir, sprintf("vessel_schools_%s%s.mp4", view, file_suffix)), mustWork = FALSE)
-  status <- system2(ffmpeg, c("-y", "-loglevel", "error", "-framerate", fps,
-                              "-i", shQuote(file.path(fdir, "f_%05d.png")),
-                              "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "21",
-                              "-vf", shQuote("scale=trunc(iw/2)*2:trunc(ih/2)*2"), shQuote(mp4)))
-  if (status != 0) stop("ffmpeg failed for view ", view)
-  message("Written: ", mp4)
 }

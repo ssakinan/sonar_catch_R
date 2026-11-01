@@ -6,6 +6,7 @@
 
 # Generated figures/tables (derived from commercial catch + sonar data; regenerate with scripts)
 output/
+output_*/
 
 # Never commit raw data
 *.csv

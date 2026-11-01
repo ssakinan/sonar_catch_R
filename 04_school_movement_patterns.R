@@ -19,13 +19,13 @@
 
 source("00_setup_functions.R")   # run from the RStudio project root
 
-grid_km <- 1   # cell size for the gridded movement field
+grid_km <- cfg$grid_km   # cell size for the gridded movement field
 
 hauls  <- read_catch(cfg$catch_file, trips = cfg$trip)
 mov    <- fread(file.path(cfg$out_dir, "school_movement.csv"))
 tracks <- readRDS(file.path(cfg$out_dir, "school_tracks.rds"))
 ints   <- fread(file.path(cfg$out_dir, "school_intervals.csv"))
-ship   <- ship_track(read_profos(cfg$profos_dir, "ppe"))
+ship   <- read_ship()
 
 mov[, t_start := as.POSIXct(t_start, tz = "UTC")]
 mov <- cbind(mov, label_phase(mov$t_start, hauls))
@@ -89,12 +89,22 @@ p_d <- ggplot(mm, aes(range_m, speed_lm)) + geom_point(aes(colour = sun), alpha 
 p_a <- ggplot(mm, aes(Area, speed_lm)) + geom_point(aes(colour = sun), alpha = 0.7) +
   geom_smooth(method = "loess", formula = y ~ x, colour = "black") + scale_x_log10() +
   labs(x = "School area (m2, log)", y = "Speed (m/s)", title = "Speed vs school size")
-p_t <- ggplot(mm, aes(t_start, speed_lm)) +
-  geom_rect(data = hz, aes(xmin = shoot_time, xmax = haul_time, ymin = -Inf, ymax = Inf),
-            fill = "red", alpha = 0.1, inherit.aes = FALSE) +
-  geom_point(aes(colour = sun), alpha = 0.7) +
-  geom_smooth(method = "loess", formula = y ~ x, colour = "black", span = 0.5) +
-  labs(x = "Time (UTC)", y = "Speed (m/s)", title = "Speed through the day (red = tows)")
+multi_day <- diff(range(as.numeric(mm$t_start))) > 1.5 * 86400
+if (!multi_day) {
+  p_t <- ggplot(mm, aes(t_start, speed_lm)) +
+    geom_rect(data = hz, aes(xmin = shoot_time, xmax = haul_time, ymin = -Inf, ymax = Inf),
+              fill = "red", alpha = 0.1, inherit.aes = FALSE) +
+    geom_point(aes(colour = sun), alpha = 0.7) +
+    geom_smooth(method = "loess", formula = y ~ x, colour = "black", span = 0.5) +
+    labs(x = "Time (UTC)", y = "Speed (m/s)", title = "Speed through the day (red = tows)")
+} else {   # several days: pool by hour of day, with a cyclic GAM
+  mm[, hour := as.numeric(format(t_start, "%H")) + as.numeric(format(t_start, "%M")) / 60]
+  p_t <- ggplot(mm, aes(hour, speed_lm)) +
+    geom_point(aes(colour = sun), alpha = 0.4, size = 0.8) +
+    geom_smooth(method = "gam", formula = y ~ s(x, bs = "cc", k = 12), colour = "black") +
+    scale_x_continuous(breaks = seq(0, 24, 3), limits = c(0, 24)) +
+    labs(x = "Hour of day (UTC)", y = "Speed (m/s)", title = "Speed through the day (all days pooled)")
+}
 p4c <- (p_d + p_a) / p_t + plot_layout(guides = "collect") &
   scale_colour_manual(values = c(day = "gold3", twilight = "orchid", night = "navy"),
                       drop = FALSE)

@@ -28,8 +28,13 @@ colour_by      <- "speed"    # "speed", "sun" or "phase"
 map_exaggerate <- 25         # displacement multiplier in the map view
 make_gif       <- FALSE
 show_legend <- FALSE      # TRUE: show colour (speed) and size (area) legends
-width_px <- if (show_legend) 1400 else 1150; height_px <- 1200; res <- 150
+t_max_quantile <- 0.99    # animation length = this quantile of track duration (longer tracks are cut)
 ffmpeg   <- "ffmpeg"         # or full path, e.g. "C:/ffmpeg/bin/ffmpeg.exe"
+
+# Override any setting without editing this file, e.g.
+#   anim_settings <- list(views = "origin", moving_only = TRUE); source("06_school_animation.R")
+if (exists("anim_settings")) list2env(anim_settings, envir = environment())
+width_px <- if (show_legend) 1400 else 1150; height_px <- 1200; res <- 150
 
 anim_dir <- file.path(cfg$out_dir, "animation")
 dir.create(anim_dir, showWarnings = FALSE, recursive = TRUE)
@@ -47,7 +52,7 @@ tracks <- tracks[sid %in% mov$sid]
 tracks[, `:=`(dx = x_kf - x_kf[1], dy = y_kf - y_kf[1]), by = sid]
 
 # interpolate every school onto a common clock (seconds since first detection)
-t_max  <- ceiling(max(tracks$tt))
+t_max  <- ceiling(quantile(tracks[, max(tt), by = sid]$V1, t_max_quantile))
 frames <- seq(0, t_max + 10, by = step_s)   # +10 s so the last tracks fade out
 grid <- tracks[, {
   tf <- frames[frames <= max(tt)]
@@ -108,7 +113,7 @@ draw_frame <- function(tnow, view) {
 
 # map background + fixed extent (all positions incl. exaggerated movement)
 if ("map" %in% views) {
-  ship_bg <- ship_track(read_profos(cfg$profos_dir, "ppe"))[seq(1, .N, 5)]
+  ship_bg <- read_ship()[seq(1, .N, 5)]
   ex <- map_exaggerate
   all_lon <- c(grid$lon0 + ex * grid$dx / (111320 * cos(grid$lat0 * pi / 180)), ship_bg$lon)
   all_lat <- c(grid$lat0 + ex * grid$dy / 111320, ship_bg$lat)
@@ -118,22 +123,10 @@ if ("map" %in% views) {
 # ---- render ---------------------------------------------------------------------------------
 for (view in views) {
   fdir <- file.path(tempdir(), paste0("frames_", view))
-  unlink(fdir, recursive = TRUE); dir.create(fdir)
   message(sprintf("Rendering %d frames for view '%s' ...", length(frames), view))
-  for (i in seq_along(frames)) {
-    ragg::agg_png(file.path(fdir, sprintf("f_%05d.png", i)),
-                  width = width_px, height = height_px, res = res)
-    print(draw_frame(frames[i], view))
-    dev.off()
-  }
-  mp4 <- normalizePath(file.path(anim_dir, sprintf("schools_%s.mp4", view)), mustWork = FALSE)
-  args <- c("-y", "-loglevel", "error", "-framerate", fps,
-            "-i", shQuote(file.path(fdir, "f_%05d.png")),
-            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20",
-            "-vf", shQuote("scale=trunc(iw/2)*2:trunc(ih/2)*2"), shQuote(mp4))
-  status <- system2(ffmpeg, args)
-  if (status != 0) stop("ffmpeg failed for view ", view)
-  message("Written: ", mp4)
+  draw_k <- function(k) draw_frame(frames[k], view)
+  render_frames(draw_k, length(frames), fdir, width_px, height_px, res)
+  mp4 <- encode_mp4(fdir, file.path(anim_dir, sprintf("schools_%s.mp4", view)), fps, ffmpeg, crf = 20)
 
   if (make_gif) {
     gif <- sub("\\.mp4$", ".gif", mp4)
