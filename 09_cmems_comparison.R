@@ -185,7 +185,8 @@ pn <- pred_nonnet(v_obs$fit, d); d[, `:=`(rx = vx - pn[, 1], ry = vy - pn[, 2])]
 daily <- d[, .(n = .N, rx = mean(rx), ry = mean(ry), qx = mean(qx), qy = mean(qy), ur = mean(ur), vr = mean(vr)),
            by = day][order(day)]
 daily[, `:=`(dir_obs = bearing_of(rx, ry), dir_swim = bearing_of(qx, qy), dir_cur = bearing_of(ur, vr))]
-swim_days_w <- daily[n >= 50, sum(dir_swim > 180 & dir_swim < 360)]; n_days50 <- daily[, sum(n >= 50)]
+near_dir <- function(b, ref) abs(((b - ref + 180) %% 360) - 180) < 90           # within 90 deg of the overall direction
+swim_days_w <- daily[n >= 50, sum(near_dir(dir_swim, v_swim$sum$dir))]; n_days50 <- daily[, sum(n >= 50)]
 
 # ---- spatial: model residual field and per-cell drift ------------------------------------------------------------
 lon0 <- mean(d$lon); lat0 <- mean(d$lat)
@@ -196,7 +197,7 @@ cells <- d[, .(n = .N, rx = mean(rx), ry = mean(ry), qx = mean(qx), qy = mean(qy
 cc <- from_xy((cells$gx + 0.5) * grid_km_m * 1000, (cells$gy + 0.5) * grid_km_m * 1000, lon0, lat0)
 cells[, `:=`(lon = cc[, 1], lat = cc[, 2])]
 cell_dirs_swim <- circ_summary(bearing_of(cells$qx, cells$qy), w = cells$n)
-share_w_swim <- cells[, sum(n[bearing_of(qx, qy) > 180 & bearing_of(qx, qy) < 360]) / sum(n)]
+share_w_swim <- cells[, sum(n[near_dir(bearing_of(qx, qy), v_swim$sum$dir)]) / sum(n)]
 
 # period-mean model residual at map_depth (mean of the daily means over the school days)
 iz <- which.min(abs(dy$dep - map_depth))
@@ -362,47 +363,52 @@ add_fig <- function(file, caption, max_w = 6.25, max_h = 8.3) {
                                   fp_p = fp_par(padding.bottom = 12)), style = "Image Caption")
 }
 
-doc <- body_add_fpar(doc, fpar(ftext("Daytime herring drift versus CMEMS model currents", fp_text(bold = TRUE, font.size = 18))))
+species <- if (cfg$trip == "2025K") "mackerel" else "herring"
+doc <- body_add_fpar(doc, fpar(ftext(sprintf("Daytime %s drift versus CMEMS model currents", species), fp_text(bold = TRUE, font.size = 18))))
 doc <- body_add_fpar(doc, fpar(ftext(sprintf("SCH302, %s sonar, trip %s, %s – %s. Generated %s with 09_cmems_comparison.R",
   cfg$label, cfg$trip, format(min(d$day), "%d %B"), format(max(d$day), "%d %B %Y"), format(Sys.Date(), "%d %B %Y")),
   fp_text(font.size = 10, color = "grey40"))))
 h1("Main result")
-lead("The current does not explain the drift.", sprintf(paste(
-  "At the same places, depths and times as the schools, the CMEMS model current has a net component of %s, about %.0f° away from",
-  "the school drift over ground (%s). The daily-mean (tide-free) model current at the schools gives the same",
-  "picture (%s km/day towards %.0f°). Over the survey area the model residual current is weak (median %s m/s at %.0f m),",
-  "except for the stronger southward flow along the western edge."),
-  vtxt(mo), ang(mo$dir, ob$dir), vtxt(ob), f1(v_res$sum$km_day), v_res$sum$dir, f2(median(sqrt(fld$ur^2 + fld$vr^2))), dy$dep[iz]))
+explains <- ang(mo$dir, ob$dir) < 45 && mo$speed > 0.5 * ob$speed      # current carries most of the drift
+swim_clear <- sw$p_zero < 0.025 && ang(sw$dir_lo, sw$dir_hi) < 90 && sw$dir_lo != sw$dir_hi
+lead(if (explains) "The current explains most of the drift." else "The current does not explain the drift.", sprintf(paste(
+  "At the same places, depths and times as the schools, the CMEMS model current has a net component of %s, %.0f° from",
+  "the school drift over ground (%s). The daily-mean (tide-free) model current at the schools gives %s km/day towards %.0f°.",
+  "Over the survey area the model residual current at %.0f m has a median speed of %s m/s."),
+  vtxt(mo), ang(mo$dir, ob$dir), vtxt(ob), f1(v_res$sum$km_day), v_res$sum$dir, dy$dep[iz], f2(median(sqrt(fld$ur^2 + fld$vr^2)))))
 lead("Swimming.", sprintf(paste(
-  "Subtracting the model current from the school velocities gives a net swimming velocity of %s. This is %.0f° from the",
-  "ground drift and slightly faster, because the weak current at the schools partly opposed their movement. None of the %d bootstrap",
-  "replicates pointed the other way."), vtxt(sw), ang(sw$dir, ob$dir), B))
+  "Subtracting the model current from the school velocities gives a net swimming velocity of %s, %.0f° from the ground drift.",
+  "In %.1f%% of the %d bootstrap replicates it pointed the other way.%s"), vtxt(sw), ang(sw$dir, ob$dir), 100 * sw$p_zero, B,
+  if (swim_clear) "" else " The swimming direction is therefore not well determined."))
 lead("Robustness.", sprintf(paste(
-  "The swimming direction stays between %.0f° and %.0f° for the depth-mean (0–75 m) and surface currents, with the sonar",
+  "The swimming direction ranges from %.0f° to %.0f° for the depth-mean (0–75 m) and surface currents, with the sonar",
   "clock taken as UTC, for slow ship speeds and for clearly moving schools, and %.0f–%.0f° when any single day is left out.",
-  "On %d of %d days with at least 50 schools the daily swimming vector pointed westward, and %.0f%% of schools were in",
-  "%d-km cells with westward swimming (cell directions R̄ = %s)."),
+  "On %d of %d days with at least 50 schools the daily swimming vector was within 90° of the overall direction, and %.0f%% of",
+  "schools were in %d-km cells where it was (cell directions R̄ = %s)."),
   min(unwrap(est[grepl("^Swimming", model) & !grepl("without", model)]$dir, sw$dir)) %% 360,
   max(unwrap(est[grepl("^Swimming", model) & !grepl("without", model)]$dir, sw$dir)) %% 360,
   loo_dir[1], loo_dir[2], swim_days_w, n_days50, 100 * share_w_swim, grid_km_m, f2(cell_dirs_swim$Rbar)))
 lead("Tide.", sprintf(paste(
-  "The model tide at the schools (12.42-h amplitude %s m/s east, %s m/s north) is larger than the tidal signal in the school",
-  "velocities (%s and %s m/s); hourly mean school velocity rises by %s (east) and %s (north) m/s per m/s of model current.",
-  "Schools therefore follow the tidal stream only partly: either they compensate part of it by swimming, or the sonar",
-  "tracks underestimate it. The phase agrees within %s h."),
+  "The model tide at the schools has a 12.42-h amplitude of %s m/s east and %s m/s north; the tidal signal in the school",
+  "velocities is %s and %s m/s. Hourly mean school velocity rises by %s (east) and %s (north) m/s per m/s of model current,",
+  "so schools %s. The phase agrees within %s h."),
   f2(amp_mod["x"]), f2(amp_mod["y"]), f2(amp_obs["x"]), f2(amp_obs["y"]), f2(adv["x"]), f2(adv["y"]),
+  if (mean(adv) > 0.85) "move largely with the tidal stream"
+  else "follow the tidal stream only partly (either they compensate part of it by swimming, or the sonar tracks underestimate it)",
   f1(max(abs(pha_dif)))))
 lead("Clock.", sprintf(paste(
   "School velocities line up best with the model tide when the sonar clock is taken as %+.2f h from UTC (r = %s, versus %s",
-  "at 0 h). This supports the sonar clock running on UTC+1 (BST) and the catch log on UTC, but the peak is broad; the",
-  "swimming estimate barely changes between the two (Table 1)."),
-  best_lag, f2(max(lag_scan$r)), f2(lag_scan[lag_h == 0, r])))
-lead("Interpretation.", paste(
-  "Within the limits of the model, the westward to south-westward daytime displacement of the herring schools is",
-  "not passive drift with the residual current; it is consistent with directed swimming of the order of",
-  sprintf("%s km/day relative to the water.", f1(sw$km_day)),
-  "The direction is towards the Orkney–Shetland spawning grounds, which fits a pre-spawning movement, but a",
-  "population-level bias of about 0.1 m/s on schools that individually swim in all directions is not proof of migration."))
+  "at 0 h); the analysis used %+d h%s."),
+  best_lag, f2(max(lag_scan$r)), f2(lag_scan[lag_h == 0, r]), lag_use,
+  if (nzchar(Sys.getenv("CMEMS_LAG_H"))) " (set from another sonar on the same trip)" else ""))
+lead("Interpretation.", if (explains) paste(
+  sprintf("The daytime net displacement of the %s schools is largely what the model current would carry them;", species),
+  sprintf("the swimming that remains (%s km/day) is small compared with the drift and the uncertainty of the model's", f1(sw$km_day)),
+  "residual current, so these data show no clear directed movement relative to the water.")
+  else paste(
+  sprintf("Within the limits of the model, the daytime displacement of the %s schools is not passive drift with the", species),
+  sprintf("residual current; it is consistent with directed swimming of about %s km/day towards %.0f° relative to the water.", f1(sw$km_day), sw$dir),
+  if (species == "herring") "The direction is towards the Orkney–Shetland spawning grounds, which fits a pre-spawning movement, but a population-level bias on schools that individually swim in all directions is not proof of migration." else ""))
 
 h1("Data and approach")
 para(sprintf(paste(
@@ -445,5 +451,5 @@ lead("Model skill.", "CMEMS NWS is a 1.5-km model with data assimilation of temp
 lead("School depth.", "Profos depth is the beam-centre depth (range × sin tilt), not a measured school depth. The result was therefore repeated with the surface current and the 0–75 m depth-mean current.")
 lead("Sampling.", "Model and schools are compared only where and when schools were seen (daytime, near the vessel), so the model 'net current' is the current at these samples, not the long-term mean.")
 lead("Orientation.", "Swimming here is the mean displacement relative to the water. Individual schools still swim in all directions; the net value is a population-level bias.")
-print(doc, target = file.path(out, "SCH302_ST90_cmems_comparison.docx"))
+print(doc, target = file.path(out, sprintf("SCH302_%s_cmems_comparison.docx", if (sonar_profile == "ST90") "ST90" else paste(cfg$label, cfg$trip, sep = "_"))))
 message("09: done -> ", normalizePath(out))

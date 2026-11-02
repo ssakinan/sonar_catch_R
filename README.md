@@ -4,7 +4,7 @@ Two sonar datasets are supported as **profiles** (settings in `cfg` and `profile
 
 | Profile | Sonar | Data | Trip | Outputs |
 |---|---|---|---|---|
-| `SU90` (default) | Simrad SU90 | `C:/Drive/Sonar/October2025/profos` (23 Oct 2025) | 2025K, mackerel | `output/` |
+| `SU90` (default) | Simrad SU90 | `D:/SONAR/Reports/2025/profos` (23–29 Oct 2025) | 2025K, mackerel | `output/` |
 | `ST90` | Simrad ST90 | `D:/SONAR/Reports/profos/ST90June2026` (28 Jun – 5 Jul 2026) | 2026E, herring | `output_ST90/` |
 | `SU90_2026` | Simrad SU90 | `D:/SONAR/Reports/profos/SU90June2026` (same period) | 2026E, herring | `output_SU90_2026/` |
 
@@ -12,7 +12,7 @@ Choose the profile before sourcing a script, e.g. in the RStudio console:
 
 ```r
 sonar_profile <- "ST90"
-source("00b_school_qc.R")   # once, before the others (ST90 only)
+source("00b_school_qc.R")   # once, before the others
 source("01_overview_maps.R")
 ```
 
@@ -21,13 +21,12 @@ Without `sonar_profile` (or the `SONAR_PROFILE` environment variable) the SU90 p
 | Script | What it answers | Main outputs |
 |---|---|---|
 | `00_setup_functions.R` | settings, profiles, readers, effort, QC, smoothing, circular stats, animation helpers | – |
-| `00b_school_qc.R` | which schools are unrealistic or outliers? (profiles with `cfg$qc`, i.e. ST90) | `school_qc.csv`, qc_a–qc_d |
+| `00b_school_qc.R` | which schools are unrealistic or outliers? (same rules for all profiles) | `school_qc.csv`, qc_a–qc_d |
 | `01_overview_maps.R` | where/when did we fish and record sonar? | 01a trip map, 01b haul vs sonar timeline, 01c sonar zoom map |
 | `02_sonar_catch_link.R` | what did the sonar see before/during each tow? | 02a timeline (+ one per day for multi-day data), 02b depth-vs-range, 02c haul zooms, 02d catch vs indices, `haul_sonar_indices.csv` |
 | `03_school_track_smoothing.R` | denoise school tracks, speed + significance | 03a–03e, `school_tracks.rds`, `school_movement.csv`, `school_intervals.csv` |
 | `04_school_movement_patterns.R` | population-level movement patterns | 04a vectors map, 04b roses, 04c speed covariates, 04d gridded field, 04e Figure-6 style |
-| `05_report.R` | Word report, SU90 | `output/SCH302_sonar_catch_report.docx` |
-| `05b_report_ST90.R` | Word report, ST90 (incl. QC) | `output_ST90/SCH302_ST90_sonar_catch_report.docx` |
+| `05_report.R` | Word report for the chosen profile (QC, sonar vs catch, tracks, movement) | `output/SCH302_sonar_catch_report.docx` (SU90), `output_ST90/SCH302_ST90_sonar_catch_report.docx` (ST90) |
 | `06_school_animation.R` | all smoothed tracks from a common start time | `animation/schools_*.mp4` |
 | `07_vessel_school_animation.R` | vessel and schools in real time | `animation/vessel_schools_*.mp4` (one per day for multi-day data) |
 | `08_daytime_migration.R` | is there a migration signal in daytime movement? (net drift after removing tide and vessel effect) | `migration/` figures 08a–08f, `08_migration_summary.png`, `08_daytime_flow.mp4`, `SCH302_ST90_daytime_migration.docx`, estimate tables |

@@ -35,7 +35,7 @@ suppressPackageStartupMessages({
 # Settings -- edit these
 # ------------------------------------------------------------------------------
 cfg <- list(
-  profos_dir   = "C:/Drive/Sonar/October2025/profos",  # all *-pp/ps/ppe.txt here
+  profos_dir   = "D:/SONAR/Reports/2025/profos",  # all *-pp/ps/ppe.txt here (23-29 Oct 2025)
   catch_file   = "C:/Drive/Sonar/SCH302_2025K_2026E.csv",
   trip         = "2025K",
   out_dir      = "output",   # relative to the project root
@@ -79,7 +79,11 @@ cfg <- list(
 # Each profile overrides only the settings that differ from the list above.
 # ------------------------------------------------------------------------------
 profiles <- list(
-  SU90 = list(label = "SU90"),
+  SU90 = list(
+    label        = "SU90",
+    map_lat_min  = NULL,  # the 23-29 Oct export reaches 59.94 N (139 of 1175 schools south of 60.12 N)
+    grid_km      = 2,
+    gap_s        = 600),  # no ppe export: track comes from pings WITH schools
   ST90 = list(
     label        = "ST90",
     profos_dir   = "D:/SONAR/Reports/profos/ST90June2026",
@@ -102,6 +106,8 @@ profiles <- list(
       jump_max       = 30,    # step between consecutive cleaned pings faster than this (m/s): tracker jump
       area_z_max     = 4      # |robust z| of log school area above this
     )))
+# SU90 2025: the same school QC as for 2026, so all three datasets are treated alike
+profiles$SU90$qc <- profiles$ST90$qc
 # SU90 on the same trip and period as ST90: same settings and QC, so the two sonars compare like for like.
 # Its clock runs 1 h 03 min 38 s behind the ST90 (ship positions in the two exports agree to ~15 m at this
 # shift, stable from day to day), so its times are moved onto the ST90 clock.

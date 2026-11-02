@@ -121,7 +121,8 @@ cells <- d[, .(n = .N, rx = mean(rx), ry = mean(ry)), by = .(gx, gy)][n >= min_c
 cc <- from_xy((cells$gx + 0.5) * grid_km_m * 1000, (cells$gy + 0.5) * grid_km_m * 1000, lon0, lat0)
 cells[, `:=`(lon = cc[, 1], lat = cc[, 2], dir = bearing_of(rx, ry), spd = sqrt(rx^2 + ry^2))]
 cell_dirs <- circ_summary(cells$dir, w = cells$n)
-share_w <- cells[, sum(n[dir > 180 & dir < 360]) / sum(n)]   # share of schools in cells drifting westward
+near_dir <- function(b, ref) abs(((b - ref + 180) %% 360) - 180) < 90   # within 90 deg of the overall drift
+share_w <- cells[, sum(n[near_dir(dir, bearing_of(v_main$fit$x[["a"]], v_main$fit$y[["a"]]))]) / sum(n)]   # share of schools in cells drifting the main way
 
 # ---- progressive vector diagram (hourly means, observed hours only) ------------------------------------
 hourly <- d[, .(t = mean(t), n = .N, vx = mean(vx), vy = mean(vy), rx = mean(rx), ry = mean(ry),
@@ -318,7 +319,8 @@ f1 <- function(x) formatC(x, format = "f", digits = 1)
 f2 <- function(x) formatC(x, format = "f", digits = 2)
 compass <- function(b) c("N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW")[round(b / 22.5) %% 16 + 1]
 loo_dir <- range(unwrap(loo$dir, ms$dir)) %% 360
-west_days <- daily[n >= 50, sum(dir > 180 & dir < 360)]; n_days50 <- daily[, sum(n >= 50)]
+west_days <- daily[n >= 50, sum(near_dir(dir, ms$dir))]; n_days50 <- daily[, sum(n >= 50)]
+species <- if (cfg$trip == "2025K") "mackerel" else "herring"
 fp_cap_lab <- fp_text(bold = TRUE, font.size = 9.5); fp_cap <- fp_text(font.size = 9.5); fp_bold <- fp_text(bold = TRUE)
 fig_no <- 0
 doc <- read_docx()
@@ -352,8 +354,8 @@ lead("Net drift.", sprintf(paste(
   else sprintf(" In %.1f%% of %d bootstrap replicates the drift pointed away from this direction.", 100 * ms$p_zero, B))
 lead("Consistency.", sprintf(paste(
   "The direction is stable when any single day is left out (%.0f–%.0f°), when only slow ship speeds or only clearly moving",
-  "schools are used, and on %d of %d days with at least 50 schools the daily drift pointed westward.",
-  "Across %d grid cells of %d km, %.0f%% of schools were in cells with a westward net drift (cell directions R̄ = %s)."),
+  "schools are used, and on %d of %d days with at least 50 schools the daily drift was within 90° of the overall direction.",
+  "Across %d grid cells of %d km, %.0f%% of schools were in cells whose net drift was within 90° of it (cell directions R̄ = %s)."),
   loo_dir[1], loo_dir[2], west_days, n_days50, nrow(cells), grid_km_m, 100 * share_w, f2(cell_dirs$Rbar)))
 lead("Tide.", sprintf(paste(
   "School velocities over the ground oscillate with the semidiurnal tide (amplitude %s m/s east–west and %s m/s",
@@ -364,13 +366,13 @@ lead("Individual schools.", sprintf(paste(
   "Individual schools still swim in all directions (R̄ = %s for de-tided directions): the drift is a weak population-level bias",
   "on top of a lot of local movement, not a coherent stream of schools."), f2(rc$Rbar)))
 lead("Interpretation.", paste(
-  "The data are consistent with a slow westward to south-westward displacement of the herring schools of the order of",
-  sprintf("%s km/day during daylight in late June – early July.", f1(ms$km_day)),
-  "This is suggestive of a migration signal but not proof of one: see Section 4 for the caveats, in particular the unknown",
-  "residual (non-tidal) current, which the sonar cannot separate from swimming.",
-  "In direction, a south-westward drift from this area points towards the Orkney–Shetland spawning grounds of North Sea",
-  "autumn-spawning herring, which spawn there in August–September; a pre-spawning movement is therefore one plausible",
-  "explanation, but these data alone cannot establish it."))
+  sprintf("The data are consistent with a slow displacement of the %s schools towards %s of the order of", species, compass(ms$dir)),
+  sprintf("%s km/day during daylight, %s – %s.", f1(ms$km_day), format(min(d$day), "%d %B"), format(max(d$day), "%d %B %Y")),
+  "This is suggestive of a migration signal but not proof of one: see Section 4 for the caveats, in particular the",
+  "residual (non-tidal) current, which the sonar cannot separate from swimming (script 09 compares with a current model).",
+  if (species == "herring") paste("In direction, a south-westward drift from this area points towards the Orkney–Shetland spawning",
+    "grounds of North Sea autumn-spawning herring, which spawn there in August–September; a pre-spawning movement is therefore",
+    "one plausible explanation, but these data alone cannot establish it.") else ""))
 add_fig("08_migration_summary.png", sprintf(paste(
   "Summary. A: mean net drift per %d-km cell (tide and vessel effect removed; red = westward, blue = eastward), over the",
   "individual school vectors (grey). B: net drift per day with 95%% bootstrap intervals (black = all days). C: progressive",
@@ -410,8 +412,9 @@ doc <- body_add_flextable(doc, ft, align = "center")
 h1("4. Caveats")
 lead("Current versus swimming.", "The sonar measures movement over ground. The model removes the oscillating tide, but a residual (non-tidal) current would appear as net drift. Comparing the result with a tidal and residual current model for the area (e.g. CMEMS North West Shelf) is the key next step before calling the drift migration.")
 lead("Vessel sampling.", "Schools are only seen within about 600 m of the vessel and in the forward sector, and the vessel goes where the fish are. The ship-velocity terms remove the direct effect of ship motion on apparent school velocity, but where and when schools were sampled is set by fishing.")
-lead("Daytime only.", "With daylight from about 03 to 21 UTC, the semidiurnal tide is sampled unevenly and diurnal tides cannot be separated from the daily cycle of school behaviour. Eight days are not enough to separate M2 and S2.")
-lead("Clock.", "Times are the sonar clock; the catch log differs by 1 h on this trip. This does not affect the drift estimate, but it shifts the tidal phase and the hour labels by 1 h if the sonar clock is not UTC.")
+day_h <- range(as.numeric(format(d$t, "%H")))
+lead("Daytime only.", sprintf("With daylight from about %02d to %02d h (sonar clock), the semidiurnal tide is sampled unevenly and diurnal tides cannot be separated from the daily cycle of school behaviour. %d days are not enough to separate M2 and S2.", day_h[1], day_h[2] + 1, uniqueN(d$day)))
+lead("Clock.", sprintf("Times are the sonar clock%s. A clock offset does not affect the drift estimate, but it shifts the tidal phase and the hour labels.", if (cfg$catch_offset_h != 0) sprintf("; the catch log differs by %g h on this trip", cfg$catch_offset_h) else ", which agrees with the catch log on this trip"))
 lead("Scale.", "A drift of a few km/day accumulates to tens of km over the period, comparable to the size of the fishing area. Longer series (more trips, other years) are needed to see whether this is a recurring seasonal movement.")
 
 h1("5. Outputs")
@@ -419,5 +422,5 @@ para("Folder ", normalizePath(out, winslash = "/"), ": figures 08a–08f and 08_
      " daytime hour with schools: school vectors on the map, that hour's observed mean, tidal and net-drift velocity in the",
      " middle, cumulative net drift on the right);",
      " migration_estimates.csv and migration_daily.csv.")
-print(doc, target = file.path(out, "SCH302_ST90_daytime_migration.docx"))
+print(doc, target = file.path(out, sprintf("SCH302_%s_daytime_migration.docx", if (sonar_profile == "ST90") "ST90" else paste(cfg$label, cfg$trip, sep = "_"))))
 message("08: done -> ", normalizePath(out))

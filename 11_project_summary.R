@@ -13,6 +13,15 @@ rd  <- function(f, ...) fread(f, ...)
 m25 <- rd("output/school_movement.csv")
 h25 <- rd("output/haul_sonar_indices.csv", colClasses = list(character = "haul_id"))
 c25 <- rd("output/movement_circular_stats.csv")
+q25 <- rd("output/school_qc.csv")
+g25 <- rd("output/migration/migration_estimates.csv")[grepl("\\(main\\)", model)]
+w25 <- rd("output/migration/cmems_estimates.csv")
+w25_sw <- w25[grepl("^Swimming = ", model)]; w25_c <- w25[grepl("^CMEMS current at schools", model)]
+cor25 <- h25[, rbindlist(lapply(c("schools_per_h", "sbi_h_db"), function(v) rbindlist(lapply(c("catch", "rate"), function(y) {
+  x <- .SD[is.finite(get(v))]; if (y == "rate") x[, rate := catch / as.numeric(difftime(haul_time, shoot_time, units = "hours"))]
+  data.table(rho = suppressWarnings(cor(x[[y]], x[[v]], method = "spearman")))
+})))), by = phase]
+n25 <- uniqueN(h25$haul_id)
 cmp <- rd("output_compare/compare_summary.csv")
 cdr <- rd("output_compare/compare_drift.csv")
 ccr <- rd("output_compare/compare_catch_correlations.csv")
@@ -32,6 +41,7 @@ st_w <- D("ST90", "Swimming");   su_w <- D("SU90", "Swimming")
 st_c <- D("ST90", "CMEMS current"); su_c <- D("SU90", "CMEMS current")
 loo_rng <- range(unwrap(loo$dir, st_g$dir)) %% 360
 hz25 <- c25[grepl("^haul", group)]
+day25 <- c25[group == "sun: day"]
 cv <- c(x = cor(prs$vx_st, prs$vx_su), y = cor(prs$vy_st, prs$vy_su))
 
 fp_b <- fp_text(bold = TRUE, font.size = 10); fp_n <- fp_text(font.size = 10)
@@ -47,28 +57,32 @@ bl <- function(head, ...) doc <<- body_add_fpar(doc, fpar(ftext("•  ", fp_n), 
                                                         fp_p = fp_par(padding.bottom = 3, padding.left = 12, line_spacing = 1.05)))
 
 doc <- body_add_fpar(doc, fpar(ftext("Omnidirectional sonar on SCH302: summary of the analyses", fp_text(bold = TRUE, font.size = 16))))
-doc <- body_add_fpar(doc, fpar(ftext(sprintf("SU90 October 2025 (mackerel) and ST90 + SU90 June–July 2026 (herring). Code: sonar_catch_R (github.com/ssakinan/sonar_catch_R). %s.",
+doc <- body_add_fpar(doc, fpar(ftext(sprintf("SU90 23–29 October 2025 (mackerel) and ST90 + SU90 June–July 2026 (herring). Code: sonar_catch_R (github.com/ssakinan/sonar_catch_R). %s.",
                                              format(Sys.Date(), "%d %B %Y")), fp_text(font.size = 9, color = "grey40")),
                                fp_p = fp_par(padding.bottom = 6)))
 
 h("Aim and data")
 p("The aim was to see what the vessel's own omnidirectional sonar adds to the interpretation of commercial catches, and what it ",
   "shows about school movement. Data are LSSS Profos school exports (per ping and per school) and the trip catch log (",
-  "SCH302_2025K_2026E.csv). Three datasets were analysed with the same R workflow: SU90, 23 October 2025, around two mackerel tows ",
-  sprintf("(%s and %s t); ST90, 28 June – 5 July 2026, %d herring tows east of Shetland and Orkney; and SU90 for the same 2026 period.",
-          f0(h25[haul_id == "2025K-7"]$catch[1]), f0(h25[haul_id == "2025K-8"]$catch[1]), ccr[sonar == "ST90" & phase == "tow"]$n[1]))
+  "SCH302_2025K_2026E.csv). Three datasets were analysed with the same R workflow and quality control: SU90, 23–29 October 2025, ",
+  sprintf("%d tows east of Shetland (mainly mackerel, %s t); ST90, 28 June – 5 July 2026, %d herring tows east of Shetland and Orkney; and SU90 for the same 2026 period.",
+          n25, f0(sum(unique(h25[, .(haul_id, catch)])$catch)), ccr[sonar == "ST90" & phase == "tow"]$n[1]))
 
 h("Method")
-bl("Quality control.", sprintf("Pings with Sv < −70 dB or near-horizontal tilt were dropped. Schools were excluded that were faster than 2.5 m/s, moved with the ship, showed tracker jumps, were near-field (< 150 m), weak (< −60 dB) or extreme in size. On the ST90 the excluded set formed a second speed mode at the ship's steaming speed (echoes tied to the vessel). Excluded: %s of %s ST90 schools and %s of %s SU90 schools.",
-   f0(S("ST90", "excluded")), f0(S("ST90", "detected")), f0(S("SU90", "excluded")), f0(S("SU90", "detected"))))
+bl("Quality control.", sprintf("Pings with Sv < −70 dB or near-horizontal tilt were dropped. Schools were excluded that were faster than 2.5 m/s, moved with the ship, showed tracker jumps, were near-field (< 150 m), weak (< −60 dB) or extreme in size. On the ST90 the excluded set formed a second speed mode at the ship's steaming speed (echoes tied to the vessel). Excluded: %s of %s schools (SU90 2025), %s of %s (ST90) and %s of %s (SU90 2026).",
+   f0(sum(q25$excluded)), f0(nrow(q25)), f0(S("ST90", "excluded")), f0(S("ST90", "detected")), f0(S("SU90", "excluded")), f0(S("SU90", "detected"))))
 bl("Track smoothing.", "Raw ping-to-ping positions jitter by 3–5 m per axis, which makes raw speeds meaningless. Tracks were cleaned (merging duplicates, outlier filter), smoothed with a spline and a Kalman smoother, and a school counted as moving only when its speed exceeded twice its standard error.")
 bl("Movement.", "Directions were summarised with circular statistics. Daytime net drift was estimated as the intercept of a model with a 12.42-h tidal harmonic and ship-velocity terms, with a bootstrap over 1-h blocks. CMEMS North-West Shelf model currents (1.5 km, hourly) were interpolated to each school's position, time and depth, and swimming = ground velocity − current.")
 
 h("Results")
-bl("SU90, October 2025.", sprintf("%s of 154 schools were tracked; positioning noise was about 4 m and the median smoothed speed %s m/s, with %.0f%% of schools moving significantly. Schools around each tow moved coherently (haul 7: %.0f°, R̄ = %s; haul 8: %.0f°, R̄ = %s), but there was no common direction overall (R̄ = %s). Both tows fished with the headline at %d–%d m, mostly below the (beam-centre) depths of the schools the sonar reported.",
-   f0(nrow(m25)), f2(median(m25$speed_lm)), 100 * mean(m25$moving), hz25[group == "haul: 2025K-7"]$mean_dir, f2(hz25[group == "haul: 2025K-7"]$Rbar),
-   hz25[group == "haul: 2025K-8"]$mean_dir, f2(hz25[group == "haul: 2025K-8"]$Rbar), f2(c25[group == "all"]$Rbar),
-   min(h25$headline_depth), max(h25$headline_depth)))
+bl("SU90, October 2025 (mackerel).", sprintf(paste(
+   "%s schools were tracked after quality control (median smoothed speed %s m/s, %.0f%% moving significantly). All %d tows fished",
+   "within the depths the sonar could see, but school numbers and backscatter still did not predict catch (|ρ| ≤ %s).",
+   "Overall there was little common direction (R̄ = %s), but daytime schools went south (%.0f°, R̄ = %s). Their net drift,",
+   "%s km/day towards %.0f°, closely matches the CMEMS current at the schools (%s km/day towards %.0f°): the mackerel were",
+   "largely carried by the current, and the swimming that remains (%s km/day) has no clear direction."),
+   f0(nrow(m25)), f2(median(m25$speed_lm)), 100 * mean(m25$moving), n25, f2(max(abs(cor25$rho), na.rm = TRUE)),
+   f2(c25[group == "all"]$Rbar), day25$mean_dir, f2(day25$Rbar), f1(g25$km_day), g25$dir, f1(w25_c$km_day), w25_c$dir, f1(w25_sw$km_day)))
 bl("ST90, 2026: sonar versus catch.", sprintf("After quality control %s schools were tracked (median speed %s m/s). School numbers and backscatter before or during a tow did not predict catch or catch rate (|ρ| ≤ %s over %d tows). Most tows fished deeper than the reported (beam-centre) school depths.",
    f0(S("ST90", "schools")), f2(S("ST90", "speed_med")), f2(max(abs(ccr[sonar == "ST90"]$rho))), ccr[sonar == "ST90" & phase == "tow"]$n[1]))
 bl("ST90, 2026: daytime migration.", sprintf("Daytime schools show a net drift of %s km/day towards %.0f° (WSW; 95%% CI %.0f–%.0f°), stable when any day is left out (%.0f–%.0f°). The semidiurnal tide moves schools back and forth at 0.13–0.19 m/s, more than the drift, and individual schools swim in all directions; the drift is a population-level bias.",
@@ -80,8 +94,9 @@ bl("ST90 versus SU90, 2026.", sprintf("The SU90 clock runs 1 h 03 min 38 s behin
    f1(su_c$km_day), su_c$dir, f2(max(abs(ccr$rho)))))
 
 tab <- data.table(
-  ` ` = c("Period", "Tracked schools (after QC)", "Median smoothed speed (m/s)", "Daytime drift over ground", "Swimming relative to CMEMS", "Max |ρ| sonar index vs catch"),
-  `SU90 2025` = c("23 Oct 2025", f0(nrow(m25)), f2(median(m25$speed_lm)), "–", "–", "2 tows only"),
+  ` ` = c("Period", "Tracked schools (after QC)", "Median smoothed speed (m/s)", "Daytime drift over ground", "Swimming relative to CMEMS", "Max |ρ| school count or backscatter vs catch"),
+  `SU90 2025` = c("23–29 Oct 2025", f0(nrow(m25)), f2(median(m25$speed_lm)), sprintf("%s km/d, %.0f°", f1(g25$km_day), g25$dir),
+                  sprintf("%s km/d, unclear", f1(w25_sw$km_day)), f2(max(abs(cor25$rho), na.rm = TRUE))),
   `ST90 2026` = c("28 Jun – 5 Jul 2026", f0(S("ST90", "schools")), f2(S("ST90", "speed_med")),
                   sprintf("%s km/d, %.0f°", f1(st_g$km_day), st_g$dir), sprintf("%s km/d, %.0f°", f1(st_w$km_day), st_w$dir),
                   f2(max(abs(ccr[sonar == "ST90"]$rho)))),
@@ -94,12 +109,12 @@ doc <- body_add_fpar(doc, fpar(ftext("Key numbers", fp_b), fp_p = fp_par(padding
 doc <- body_add_flextable(doc, ft, align = "left")
 
 h("Conclusions")
-bl("Catch.", "With the current exports the sonar indices do not explain catch: tows fish deeper than the reported schools, the forward ±90° sector and ~550–600 m range limit what is seen, and catch also depends on where and how the skipper chose to fish.")
-bl("Movement.", "Smoothing is essential: smoothed tracks give realistic speeds (median ~0.6 m/s) and coherent local movement. Two independent sonars show the daytime herring moving west to south-west at about 10 km/day relative to the water, while the model current is weak and south-easterly, consistent with a movement towards the Orkney–Shetland spawning grounds; this is suggestive of migration, not proof.")
+bl("Catch.", "In none of the three datasets did the sonar indices explain catch, even in 2025 when all tows fished within the depths the sonar could see. The forward ±90° sector and ~600 m range limit what is seen, catch per haul is capped by the skipper and the vessel, and counts within 5 km describe the area more than the fish that entered the net.")
+bl("Movement.", "Smoothing is essential: smoothed tracks give realistic speeds (medians 0.6–0.75 m/s). In 2026 two independent sonars show the daytime herring moving west to south-west at about 10 km/day relative to the water against a weak south-easterly current, consistent with a movement towards the Orkney–Shetland spawning grounds; this is suggestive of migration, not proof. In 2025 the southward drift of the mackerel is explained by the current, which shows the value of the current-model check.")
 bl("Data quality.", "Profos depth is the beam-centre depth (range × sin tilt): the same school is reported at ~29 m by the ST90 and ~63 m by the SU90. Clocks differ: the ST90 is about 1 h ahead of the catch log and the SU90.")
 
 h("Next steps")
-bl("Export settings.", "Re-export with the full sector and longer range, and the per-ping effort file (ppe), which the 2026 exports lack.")
+bl("Export settings.", "Re-export with the full sector and longer range, and the per-ping effort file (ppe), which the current exports lack.")
 bl("Clocks and depth.", "Fix all clocks to UTC at source. Use the vertical fan or echosounder for true school depth to compare with headline depth.")
 bl("More data.", "Repeat the migration analysis on other trips and years to see whether the westward movement recurs at this time of year, and validate the swimming estimate against current measurements (e.g. ADCP).")
 bl("Outputs.", "Reports: output/SCH302_sonar_catch_report.docx, output_ST90/SCH302_ST90_sonar_catch_report.docx, output_ST90/migration/ (migration and CMEMS documents), output_compare/SCH302_ST90_vs_SU90.docx; animations in output*/animation.")

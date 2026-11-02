@@ -1,403 +1,365 @@
 ################################################################################
 # 05_report.R
 #
-# Builds a Word report (output/SCH302_sonar_catch_report.docx) summarising the
-# analyses of scripts 01-04, with every figure followed by a caption paragraph.
+# Word report for one sonar profile: school quality control, sonar vs catch,
+# track smoothing and movement patterns.
+#   sonar_profile <- "SU90"; source("05_report.R")   # SU90, 23-29 Oct 2025 (mackerel)
+#   sonar_profile <- "ST90"; source("05_report.R")   # ST90, 28 Jun - 5 Jul 2026 (herring)
+# Output: output/SCH302_sonar_catch_report.docx (SU90) or
+#         output_ST90/SCH302_ST90_sonar_catch_report.docx (ST90)
 #
-#   1. Re-runs 01-04 in "report mode" (SONAR_REPORT=1): identical figures but
-#      without titles/subtitles, written to output/report_figs/.
-#   2. Assembles the document with officer + flextable.
+#   1. Re-runs 00b and 01-04 in report mode (figures without titles; captions
+#      go below each figure in the document). Set SKIP_FIGURES=1 to reuse them.
+#   2. Builds the document with officer + flextable.
 #
-# Numbers in the text are computed from the outputs. The interpretation was
-# written for the 23 Oct 2025 sample (hauls 7-8) -- revise the wording when
-# Profos exports for more days are added.
+# Numbers and most statements are computed from the outputs; check the wording
+# if the data change.
 ################################################################################
 
-rerun_figures <- !identical(Sys.getenv("SKIP_FIGURES"), "1")   # set SKIP_FIGURES=1 to reuse figures
-
+if (!exists("sonar_profile")) sonar_profile <- Sys.getenv("SONAR_PROFILE", "SU90")
+rerun_figures <- !identical(Sys.getenv("SKIP_FIGURES"), "1")
 if (rerun_figures) {
   Sys.setenv(SONAR_REPORT = "1")
-  for (s in c("01_overview_maps.R", "02_sonar_catch_link.R",
+  for (s in c("00b_school_qc.R", "01_overview_maps.R", "02_sonar_catch_link.R",
               "03_school_track_smoothing.R", "04_school_movement_patterns.R")) {
     message("Running ", s, " in report mode ...")
     source(s, local = new.env())
   }
 }
 Sys.setenv(SONAR_REPORT = "1")
-source("00_setup_functions.R")      # sets cfg$out_dir to output/report_figs
+source("00_setup_functions.R")      # cfg$out_dir -> output_ST90/report_figs
 library(officer)
 library(flextable)
 
 fig_dir  <- cfg$out_dir
-out_docx <- file.path(dirname(fig_dir), "SCH302_sonar_catch_report.docx")
+base_dir <- dirname(fig_dir)
+out_docx <- file.path(base_dir, if (cfg$label == "ST90") "SCH302_ST90_sonar_catch_report.docx" else "SCH302_sonar_catch_report.docx")
 
-# ---- numbers for the text ---------------------------------------------------------
+# ---- numbers for the text ---------------------------------------------------------------
 hauls <- read_catch(cfg$catch_file, trips = cfg$trip)
 ship  <- read_ship()
-pp    <- apply_school_qc(read_profos(cfg$profos_dir, "pp"))
+raw   <- read_profos(cfg$profos_dir, "pp")
+qc    <- fread(file.path(base_dir, "school_qc.csv"))
+pp    <- apply_school_qc(raw)
 ind   <- fread(file.path(fig_dir, "haul_sonar_indices.csv"), colClasses = list(character = "haul_id"))  # "2026E-41" would parse as a number
 mov   <- fread(file.path(fig_dir, "school_movement.csv"))
 cst   <- fread(file.path(fig_dir, "movement_circular_stats.csv"))
 mm    <- mov[moving == TRUE]
+q     <- cfg$qc
 
+f0 <- function(x) formatC(round(x), format = "d", big.mark = ",")
 f1 <- function(x) formatC(x, format = "f", digits = 1, big.mark = ",")
 f2 <- function(x) formatC(x, format = "f", digits = 2)
-f0 <- function(x) formatC(x, format = "d", big.mark = ",")
 pv <- function(p) if (p < 0.001) "p < 0.001" else paste("p =", formatC(p, digits = 2, format = "g"))
 cs <- function(g) cst[group == g]
 
-n_sch_all  <- uniqueN(pp[!is.na(Id)]$sid)
-rec_h      <- sum(ship$dt, na.rm = TRUE) / 3600
-dist_km    <- sum(ship$dist_m) / 1000
-sp_by_sun  <- mm[, .(med = median(speed_lm), n = .N), by = sun]
-w_day_night <- wilcox.test(speed_lm ~ sun, mm[sun %in% c("day", "night")], exact = FALSE)$p.value
-rho_area   <- suppressWarnings(cor.test(log(mm$Area), mm$speed_lm, method = "spearman"))
-rho_range  <- suppressWarnings(cor.test(mm$range_m, mm$speed_lm, method = "spearman"))
+n_det_raw  <- nrow(raw[!is.na(Id)])
+n_sch_raw  <- uniqueN(raw[!is.na(Id)]$sid)
+n_ping_drop <- n_det_raw - nrow(qc_pings(raw)[!is.na(Id)])
+n_excl     <- sum(qc$excluded); n_kept <- uniqueN(pp[!is.na(Id)]$sid)
+rule_n     <- qc[, lapply(.SD, sum), .SDcols = patterns("^r_")]
+qt         <- qc[tracked == TRUE]
+days       <- sort(unique(as.Date(ship$t)))
+cover_h    <- ship[, diff(range(as.numeric(t))), by = seg][, sum(V1)] / 3600
+m_all      <- merge_pp(pp)
+fits_tilt  <- m_all[, .(n = .N, r2 = summary(lm(depth ~ range_m))$r.squared, max_depth = max(depth)), by = tilt][order(tilt)]
+rel_sector <- m_all[, mean(rel_bearing > 90 & rel_bearing < 270)]
+noise_m    <- { nz <- m_all[sid %in% mov$sid, { xy <- to_xy(lon, lat); .(sx = noise_sd(xy[, 1]), sy = noise_sd(xy[, 2])) }, by = sid]
+                median(c(nz$sx, nz$sy), na.rm = TRUE) }
 mov[, v_along := vx * sin(ship_bearing * pi / 180) + vy * cos(ship_bearing * pi / 180)]
 fit_art    <- summary(lm(v_along ~ ship_speed, mov[moving == TRUE]))$coefficients
-raw_step   <- {
-  m <- merge_pp(pp)
-  m[, v := c(NA, sqrt(diff(to_xy(lon, lat)[, 1])^2 + diff(to_xy(lon, lat)[, 2])^2) /
-               diff(as.numeric(t))), by = sid]
-  median(m$v[is.finite(m$v)])
-}
-noise_m <- {   # same estimator as script 03
-  m <- merge_pp(pp)[sid %in% mov$sid]
-  nz <- m[, {xy <- to_xy(lon, lat); .(sx = noise_sd(xy[, 1]), sy = noise_sd(xy[, 2]))}, by = sid]
-  median(c(nz$sx, nz$sy), na.rm = TRUE)
-}
-fits_tilt <- merge_pp(pp)[, .(r2 = summary(lm(depth ~ range_m))$r.squared,
-                              max_depth = max(depth)), by = tilt]
-hz <- hauls[haul_id %in% ind$haul_id]
-spd <- function(s) f2(sp_by_sun[sun == s, med])
+rho_area   <- suppressWarnings(cor.test(log(mm$Area), mm$speed_lm, method = "spearman"))
+rho_range  <- suppressWarnings(cor.test(mm$range_m, mm$speed_lm, method = "spearman"))
+mm[, hour := as.numeric(format(as.POSIXct(t_start, tz = "UTC"), "%H")) +
+             as.numeric(format(as.POSIXct(t_start, tz = "UTC"), "%M")) / 60]
+g_hour     <- mgcv::gam(speed_lm ~ s(hour, bs = "cc", k = 12), data = mm, knots = list(hour = c(0, 24)))
+hh         <- data.frame(hour = seq(0, 23.9, 0.1)); hh$fit <- predict(g_hour, hh)
+peak_h     <- hh$hour[which.max(hh$fit)]; low_h <- hh$hour[which.min(hh$fit)]
+haul_st    <- cst[grepl("^haul", group)]
+hz         <- hauls[haul_id %in% ind$haul_id]
+ind[, tow_h := as.numeric(difftime(haul_time, shoot_time, units = "hours"))]
+ind[, rate := catch / tow_h]
+cors <- rbindlist(lapply(c("search", "tow"), function(ph) rbindlist(lapply(c("schools_per_h", "sbi_h_db", "depth_w"), function(v) {
+  rbindlist(lapply(c("catch", "rate"), function(y) {
+    d <- ind[phase == ph & is.finite(get(v))]
+    ct <- suppressWarnings(cor.test(d[[y]], d[[v]], method = "spearman"))
+    data.table(phase = ph, index = v, response = y, n = nrow(d), rho = ct$estimate, p = ct$p.value)
+  }))
+}))))
+max_abs_rho <- max(abs(cors$rho)); min_p <- min(cors$p)
+busy_day <- names(which.max(table(as.Date(pp$t))))
+n_below  <- sum(hz$headline_depth > max(m_all$depth))   # tows with headline deeper than any sonar detection
+shallow  <- hz[headline_depth <= max(m_all$depth) - 10]                              # well inside the sonar's depth range
+edge     <- hz[headline_depth > max(m_all$depth) - 10 & headline_depth <= max(m_all$depth)]  # only the deepest detections
+species  <- if (cfg$trip == "2025K") "mackerel" else "herring"
+sp_tab   <- hz[, .N, by = dom_species][order(-N)]
+sp_name  <- c(mac = "mackerel", her = "herring", hom = "horse mackerel", whb = "blue whiting")
+sp_txt   <- paste0(sp_tab$N, " ", ifelse(is.na(sp_name[sp_tab$dom_species]), sp_tab$dom_species, sp_name[sp_tab$dom_species]), collapse = ", ")
+ship_mode <- mean(qt$speed_lm > 5, na.rm = TRUE) > 0.05      # second speed mode at steaming speed?
+ping_int  <- median(diff(sort(unique(as.numeric(raw$t)))))
+has_space <- any(grepl(" ", raw$File))
+rel_dir   <- circ_summary((mm$bearing_lm - mm$ship_bearing) %% 360)
+day_share <- mov[, .(day = mean(sun == "day"), night = mean(sun == "night"))]
+catch_iqr <- round(quantile(hz$catch, c(0.25, 0.75)), -1)
 
-# ---- document helpers ---------------------------------------------------------------
+# ---- document helpers ---------------------------------------------------------------------
 fp_cap_lab <- fp_text(bold = TRUE, font.size = 9.5)
 fp_cap     <- fp_text(font.size = 9.5)
 fp_bold    <- fp_text(bold = TRUE)
 fig_no <- 0; tab_no <- 0
-
 doc <- read_docx()
 doc <- body_set_default_section(doc, prop_section(
   page_size = page_size(orient = "portrait", width = 21 / 2.54, height = 29.7 / 2.54),
   page_margins = page_mar(top = 1, bottom = 1, left = 1, right = 1)))
-
 h1 <- function(txt) doc <<- body_add_par(doc, txt, style = "heading 1")
 h2 <- function(txt) doc <<- body_add_par(doc, txt, style = "heading 2")
 para <- function(...) doc <<- body_add_par(doc, paste0(...), style = "Normal")
 lead <- function(head, ...) doc <<- body_add_fpar(doc, fpar(ftext(paste0(head, " "), fp_bold),
                                                             ftext(paste0(...))), style = "Normal")
-
 add_fig <- function(file, caption, max_w = 6.25, max_h = 8.3) {
   fig_no <<- fig_no + 1
   d <- dim(png::readPNG(file.path(fig_dir, file)))
   w <- max_w; h <- w * d[1] / d[2]
   if (h > max_h) { h <- max_h; w <- h * d[2] / d[1] }
   doc <<- body_add_fpar(doc, fpar(external_img(file.path(fig_dir, file), width = w, height = h),
-                                  fp_p = fp_par(text.align = "center", keep_with_next = TRUE,
-                                                padding.top = 6)))
-  doc <<- body_add_fpar(doc, fpar(ftext(sprintf("Figure %d. ", fig_no), fp_cap_lab),
-                                  ftext(caption, fp_cap),
-                                  fp_p = fp_par(padding.bottom = 12)),
-                        style = "Image Caption")
-  invisible(fig_no)
+                                  fp_p = fp_par(text.align = "center", keep_with_next = TRUE, padding.top = 6)))
+  doc <<- body_add_fpar(doc, fpar(ftext(sprintf("Figure %d. ", fig_no), fp_cap_lab), ftext(caption, fp_cap),
+                                  fp_p = fp_par(padding.bottom = 12)), style = "Image Caption")
 }
-add_table_caption <- function(caption) {
+add_table <- function(tab, caption, widths) {
   tab_no <<- tab_no + 1
-  doc <<- body_add_fpar(doc, fpar(ftext(sprintf("Table %d. ", tab_no), fp_cap_lab),
-                                  ftext(caption, fp_cap),
-                                  fp_p = fp_par(keep_with_next = TRUE, padding.top = 6)),
-                        style = "Table Caption")
+  doc <<- body_add_fpar(doc, fpar(ftext(sprintf("Table %d. ", tab_no), fp_cap_lab), ftext(caption, fp_cap),
+                                  fp_p = fp_par(keep_with_next = TRUE, padding.top = 6)), style = "Table Caption")
+  ft <- flextable(tab); ft <- theme_booktabs(ft); ft <- fontsize(ft, size = 8.5, part = "all")
+  ft <- bold(ft, part = "header"); ft <- align(ft, align = "center", part = "all"); ft <- width(ft, width = widths)
+  doc <<- body_add_flextable(doc, ft, align = "center")
+  doc <<- body_add_par(doc, "", style = "Normal")
 }
+fig_no_next <- function(k = 1) fig_no + k
 
-# ---- title -------------------------------------------------------------------------------
-doc <- body_add_fpar(doc, fpar(ftext("Omnidirectional sonar and midwater trawl catches on SCH302",
-                                     fp_text(bold = TRUE, font.size = 20))))
+# ---- title ----------------------------------------------------------------------------------
+doc <- body_add_fpar(doc, fpar(ftext(sprintf("%s sonar and %s catches on SCH302", cfg$label, species), fp_text(bold = TRUE, font.size = 20))))
 doc <- body_add_fpar(doc, fpar(ftext(sprintf(
-  "Exploratory analysis of LSSS Profos school detections, trip %s (sonar sample %s)",
-  cfg$trip, format(min(ship$t), "%d %B %Y")), fp_text(font.size = 13, color = "grey30"))))
+  "School quality control, sonar versus catch and school movement, trip %s, %s – %s",
+  cfg$trip, format(min(days), "%d %B"), format(max(days), "%d %B %Y")), fp_text(font.size = 13, color = "grey30"))))
 doc <- body_add_fpar(doc, fpar(ftext(paste("Report generated", format(Sys.Date(), "%d %B %Y"),
-                                           "with the sonar_catch_R scripts"),
+                                           paste0("with the sonar_catch_R scripts (profile ", sonar_profile, ")")),
                                      fp_text(font.size = 9.5, color = "grey40"))))
 
-# ---- 1 summary ----------------------------------------------------------------------------
+# ---- 1 summary ------------------------------------------------------------------------------
 h1("1. Summary")
-para("This report links school detections from the vessel's omnidirectional sonar (processed with ",
-     "the LSSS Profos school tracker) to the catch of the midwater trawl hauls, and describes how the ",
-     "detected schools moved. It uses the Profos exports currently available for ",
-     format(min(ship$t), "%d %B %Y"), ", which cover hauls ", paste(hz$haul, collapse = " and "), ". ",
-     "The workflow is written for the whole trip: adding further Profos exports updates every ",
-     "figure and table.")
-lead("Profos depth is not a measured depth.",
-     "The school depth reported by Profos equals range x sin(tilt) exactly (R² = ",
-     paste(formatC(fits_tilt$r2, format = "f", digits = 4), collapse = " and "),
-     " for the two tilts), i.e. the depth of the beam centre at the school's range. ",
-     "At the tilts used (", paste(sort(unique(fits_tilt$tilt)), collapse = "° and "),
-     "°) the sonar cannot observe schools deeper than about ",
-     paste(round(fits_tilt$max_depth), collapse = "–"), " m, while the hauls fished from ",
-     paste(range(hz$headline_depth), collapse = "–"), " m. Sonar school depth can therefore not be ",
-     "compared with fishing depth; the echosounder is needed for that.")
-lead("Raw school positions are noisy; smoothing is essential.",
-     "The centroid of a tracked school jitters by about ", f1(noise_m), " m per axis from ping to ping ",
-     "(more at long range), which makes raw ping-to-ping speeds meaningless (median ", f1(raw_step),
-     " m/s). Smoothing over 20–30 s or more gives stable speeds; the median school speed is ",
-     f2(median(mov$speed_lm)), " m/s, consistent with the LSSS estimate (r = ",
-     f2(cor(mov$lsss_speed, mov$speed_lm, use = "complete")), ").")
-lead("Most schools were really moving.",
-     f0(nrow(mm)), " of ", f0(nrow(mov)), " tracked schools (", round(100 * nrow(mm) / nrow(mov)),
-     "%) had a speed significantly above zero. Schools were faster at night (median ", spd("night"),
-     " m/s) than by day (", spd("day"), " m/s; Wilcoxon ", pv(w_day_night), ") and larger schools ",
-     "swam faster (Spearman ρ = ", f2(rho_area$estimate), ", ", pv(rho_area$p.value), ").")
-lead("Directions were local, not general.",
-     "Across all schools there was no common swimming direction (R̄ = ", f2(cs("all")$Rbar), ", ",
-     pv(cs("all")$rayleigh_p), "), but schools near each haul shared a direction: ",
-     paste(sprintf("haul %s %.0f° (R̄ = %s, %s)", sub(".*-", "", sub("haul: ", "", cst[grepl("^haul", group)]$group)),
-                   cst[grepl("^haul", group)]$mean_dir, f2(cst[grepl("^haul", group)]$Rbar),
-                   sapply(cst[grepl("^haul", group)]$rayleigh_p, pv)), collapse = "; "), ".")
-lead("Sonar and catch.",
-     "Both hauls were pure mackerel (", paste(round(hz$catch), collapse = " and "), " t). ",
-     "School encounter rates were high while towing in both hauls (",
-     paste(f1(ind[phase == "tow", schools_per_10km]), collapse = " and "),
-     " schools per 10 km sailed). With two hauls no relationship between sonar indices and catch can ",
-     "be tested; the per-haul indices (Table 1) are produced so that this can be done once the whole ",
-     "trip is exported.")
+para("This report analyses school detections from the Simrad ", cfg$label, " omnidirectional sonar on SCH302, ",
+     "processed with the LSSS Profos school tracker, for ", length(days), " days (",
+     format(min(days), "%d %B"), " – ", format(max(days), "%d %B %Y"), ") during which the vessel fished mainly ",
+     species, ". ", if (cfg$label == "ST90") paste("The ST90 works at a lower frequency and longer range than the SU90, and its",
+     "targets here are mainly herring schools. ") else "",
+     "Unrealistic or outlier schools are removed before analysis, with the same rules for all datasets.")
+lead("Unrealistic schools were removed.",
+     f0(n_excl), " of ", f0(n_sch_raw), " schools (", round(100 * n_excl / n_sch_raw), "%) were excluded. ",
+     "The largest group appeared to swim faster than ", q$speed_max, " m/s (", rule_n$r_speed, " schools)",
+     if (ship_mode) paste(", with a second mode at 6–7 m/s that matches the vessel's steaming speed: echoes that move",
+                          "with the ship rather than fish") else ", forming a tail of implausibly fast tracks",
+     ". After exclusion the median school speed is ", f2(median(mov$speed_lm)), " m/s and 95% of schools swim ",
+     "slower than ", f1(quantile(mov$speed_lm, 0.95)), " m/s, which is realistic for ", species, ".")
+lead("Profos depth is a beam-centre depth.",
+     "Profos school depth equals range x sin(tilt) exactly (R² > 0.9999 ",
+     "for every tilt). With the export limited to about ",
+     round(max(m_all$range_m), -1), " m range, no school deeper than ", round(max(m_all$depth)), " m could be seen; ",
+     if (n_below > 0) paste0(n_below, " of ", nrow(hz), " hauls fished with the headline deeper than that")
+     else paste0("all ", nrow(hz), " hauls fished with the headline within that depth range"),
+     " (median headline depth ", round(median(hz$headline_depth)), " m).")
+lead("Sonar abundance did not predict catch.",
+     "Across ", nrow(hz), " hauls, neither the number of schools nor their backscatter, during the search ",
+     "before shooting or during the tow, was related to catch or catch per hour of towing (all |ρ| ≤ ",
+     f2(max_abs_rho), ", all p ≥ ", formatC(min_p, digits = 2, format = "f"), ").")
+sig_h <- haul_st[rayleigh_p < 0.05]
+lead(if (nrow(sig_h) >= nrow(haul_st) / 2) "Schools moved locally in the same direction." else "Little common direction.",
+     "Over the whole area there was little common swimming direction (R̄ = ", f2(cs("all")$Rbar), "); within ",
+     nrow(sig_h), " of ", nrow(haul_st), " haul areas schools moved together (Rayleigh p < 0.05",
+     if (nrow(sig_h)) paste0(", R̄ = ", paste(unique(f2(range(sig_h$Rbar))), collapse = "–")) else "", "). ",
+     "In daylight the mean direction was ", round(cs("sun: day")$mean_dir), "° (R̄ = ", f2(cs("sun: day")$Rbar), ", ",
+     pv(cs("sun: day")$rayleigh_p), "), at night ", round(cs("sun: night")$mean_dir), "° (R̄ = ", f2(cs("sun: night")$Rbar),
+     ", ", pv(cs("sun: night")$rayleigh_p), ").")
+lead("Speed varied through the day.",
+     "Pooled over all days, school speed peaked around ", sprintf("%02.0f:00", peak_h), " (sonar clock) and was lowest ",
+     "around ", sprintf("%02.0f:00", low_h), ". ",
+     if (rho_area$p.value < 0.05) paste0(if (rho_area$estimate > 0) "Larger" else "Smaller", " schools swam slightly faster")
+     else "Speed was not related to school size", " (Spearman ρ = ", f2(rho_area$estimate), ", ", pv(rho_area$p.value), ").")
+if (cfg$catch_offset_h != 0) lead("Clock offset.",
+     "Haul times in the catch file are one hour behind the sonar clock for this trip: the vessel track passes the ",
+     "logged shoot and haul positions only after adding 1 h (median distance 0.6 and 0.9 km, against 4.3 and 6.9 km ",
+     "without correction). All haul times were shifted by +1 h.") else lead("Clock.",
+     "Haul times in the catch file match the sonar clock for this trip (the ship track passes the logged shoot positions ",
+     "without a time shift).")
 
-# ---- 2 data -------------------------------------------------------------------------------
+# ---- 2 data ---------------------------------------------------------------------------------
 h1("2. Data")
-para("Catch data: ", nrow(hauls), " hauls of trip ", cfg$trip, " (", format(min(hauls$shoot_time), "%d %b"),
-     " – ", format(max(hauls$haul_time), "%d %b %Y"), "), ", f0(round(sum(hauls$catch))), " t in total. ",
-     "The dominant species was mackerel in ", sum(hauls$dom_species == "mac"), " hauls, blue whiting in ",
-     sum(hauls$dom_species == "whb"), " and herring in ", sum(hauls$dom_species == "her"), ". ",
-     "Shoot and haul times are in UTC: the sonar ship track passes the logged shoot and haul ",
-     "positions with no time offset, within the one-minute rounding of the positions.")
-para("Sonar data: Profos exports for ", format(min(ship$t), "%d %B %Y"), " (", f1(rec_h), " h of recording, ",
-     f0(round(dist_km)), " km sailed, ", f0(nrow(ship)), " pings, ", f0(n_sch_all), " schools with ",
-     f0(nrow(pp[!is.na(Id)])), " detections). Three file types are used: pp (one row per school per ping), ",
-     "ps (one row per school, the LSSS summary) and ppe (one row per ping including pings without ",
-     "schools, used as the ship track and sonar effort). Ship speed in the Profos files is in m/s.")
+para("Sonar: one Profos run (", paste(unique(raw$run), collapse = ", "), ") with a pp file (", f0(n_det_raw), " school detections of ",
+     f0(n_sch_raw), " schools) and a ps file (one row per school). There is no ppe export, so pings without schools are ",
+     "missing: the vessel track and sonar effort can only be reconstructed from pings that detected a school (",
+     length(unique(ship$seg)), " track sections covering ", f0(cover_h), " h). Effort-based indices are therefore expressed ",
+     "per hour of the search or tow window, assuming the sonar ran throughout. ",
+     if (has_space) "The File column of this export contains spaces, which required a more robust file reader. " else "",
+     "Ping interval is about ", f1(ping_int), " s and tilts were mostly ",
+     paste(fits_tilt[n == max(n)]$tilt), "° (", f0(max(fits_tilt$n)), " detections). All detections lie within ±90° of the bow (",
+     round(100 * (1 - rel_sector)), "%), so the sector behind the vessel is not represented in this export.")
+para("Catch: ", nrow(hz), " hauls of trip ", cfg$trip, " overlap the sonar data (hauls ", min(hz$haul), "–", max(hz$haul),
+     "); dominant species: ", sp_txt, " (", f0(sum(hz$catch)), " t in total, ", f0(min(hz$catch)), "–", f0(max(hz$catch)),
+     " t per haul).")
 
-# ---- 3 methods ----------------------------------------------------------------------------
-h1("3. Methods")
-h2("3.1 Linking sonar to hauls")
-para("Each ping and school detection was assigned to a haul phase: search (the ", cfg$pre_shoot_h,
-     " h before shoot) or tow (shoot to haul). Schools were included if they were within ",
-     cfg$buffer_km, " km of the ship track during the tow. Sonar effort was taken from the ppe file as the ",
-     "number of pings, the recording time (gaps longer than ", cfg$gap_s, " s count as sonar off) and ",
-     "the distance sailed while recording. Per haul and phase the following indices were computed: ",
-     "number of distinct schools, schools per 10 km sailed, a school backscatter index (10 log10 of the ",
-     "summed linear Sv x school area per ping; relative, uncalibrated), the backscatter-weighted school ",
-     "depth, and the fraction of school backscatter inside the trawl layer (headline depth to headline ",
-     "+ ", cfg$default_vert_opening, " m; the vertical opening is not recorded in the catch file).")
-h2("3.2 Cleaning and smoothing school tracks")
-para("The approach of Figure_6_R_code.R was extended from one school to all schools. Schools with fewer than ",
-     cfg$min_pings, " pings or a track shorter than ", cfg$min_duration, " s were excluded. When Profos ",
-     "reported the same school twice in one ping (a split school), the detections were merged into one ",
-     "area-weighted position instead of adding random jitter to the time stamps. Sudden tracker jumps were ",
-     "removed with a two-dimensional Hampel filter (running median over ", 2 * cfg$hampel_k + 1,
-     " pings; points more than ", cfg$hampel_nsig, " robust SD and at least ", cfg$hampel_floor,
-     " m from it were removed). The positioning noise was estimated from second differences of the ",
-     "positions, which cancel constant swimming velocity.")
-para("Two smoothers were compared: a smoothing spline with about one degree of freedom per ", cfg$tau_s,
-     " s (a physical time scale, rather than the fixed lambda of Figure_6, whose effect depends on track ",
-     "length), and a constant-velocity Kalman filter with Rauch–Tung–Striebel smoother (process noise ",
-     cfg$sigma_acc, " m/s², measurement noise as estimated), which also gives the uncertainty of the velocity.")
-h2("3.3 Movement metrics")
-para("For each school the velocity was estimated by linear regression of the cleaned positions on time. ",
-     "Its standard error was inflated for lag-1 autocorrelation of the residuals, and a school was classed as ",
-     "moving when its speed exceeded twice this standard error. Directions are compass bearings (0° = north, ",
-     "clockwise). Directions were summarised with circular statistics: mean direction, mean resultant length ",
-     "R̄ (0 = no common direction, 1 = identical directions) and the Rayleigh test of uniformity. Light ",
-     "conditions were derived from solar elevation (day > 0°, twilight 0 to −6°, night < −6°). ",
-     "Velocities over ", cfg$interval_s, "-s intervals of the smoothed tracks reproduce the Figure 6 summary for all schools.")
+# ---- 3 QC -----------------------------------------------------------------------------------
+h1("3. Quality control: unrealistic and outlier schools")
+para("Before analysis, ", f0(n_ping_drop), " detections were removed at ping level: Sv below ", q$ping_sv_min,
+     " dB (far below ", species, " school values) or tilt shallower than ", q$ping_tilt_max, "° (near-horizontal beam, ",
+     "dominated by surface echoes). Schools were then tested against six rules (Table 1). Speed, ship-alignment and ",
+     "jump rules need a track and were applied to the ", f0(nrow(qt)), " schools with at least ", cfg$min_pings,
+     " pings over ", cfg$min_duration, " s; the other rules were applied to all schools.")
+para(if (ship_mode) paste0("The speed distribution of tracked schools is bimodal (Figure ", fig_no_next(), "): a main mode below 1 m/s and a ",
+     "second mode at 6–7 m/s. The second mode coincides with the ship's steaming speed, and these 'schools' head almost ",
+     "exactly where the ship heads (Figure ", fig_no_next(2), "), i.e. they are echoes tied to the vessel. The ", q$speed_max,
+     " m/s threshold separates the two modes. ") else paste0("Most tracked schools swim slower than 1 m/s, with a tail of faster ",
+     "tracks (Figure ", fig_no_next(), "); some of these move in the ship's direction at a large fraction of its speed (Figure ",
+     fig_no_next(2), "), i.e. they are echoes tied to the vessel. "), "Of the excluded tracked schools the median speed was ",
+     f1(median(qt[excluded == TRUE]$speed_lm)), " m/s, against ", f2(median(qt[excluded == FALSE]$speed_lm)), " m/s for ",
+     "those kept. Excluded schools are spread over the whole area (Figure ", fig_no_next(4), "), so the exclusion does not ",
+     "remove a particular region.")
+qtab <- data.table(
+  Rule = c("Speed", "Moves with ship", "Track jump", "Near field", "Weak echo", "Size outlier"),
+  Criterion = c(sprintf("Smoothed speed > %s m/s", q$speed_max),
+                sprintf("Heading within %s° of ship, speed > %s x ship speed, ship > %s m/s", q$ship_hd_max, q$ship_frac, q$ship_speed_min),
+                sprintf("Step between cleaned pings > %s m/s", q$jump_max),
+                sprintf("Mean range < %s m", q$range_min),
+                sprintf("Mean Sv < %s dB", q$school_sv_min),
+                sprintf("|robust z| of log area > %s", q$area_z_max)),
+  Reason = c(paste("Faster than", species, "sustain"), "Echo fixed to the vessel", "Tracker merged or switched schools",
+             "Wake, bubbles, surface echoes", paste("Too weak for a", species, "school"), "Implausible size"),
+  Schools = c(rule_n$r_speed, rule_n$r_ship, rule_n$r_jump, rule_n$r_near, rule_n$r_weak, rule_n$r_area))
+add_table(qtab, sprintf("Exclusion rules and number of schools flagged by each (rules overlap; %s schools excluded in total).",
+                        f0(n_excl)), c(1.0, 2.6, 1.9, 0.7))
+add_fig("qc_a_speed.png", sprintf(paste(
+  "Left: smoothed speed of the %s tracked schools (log scale), kept (grey) and excluded (red); dashed line = %s m/s",
+  "limit. Right: school speed against ship speed during the track; dotted = 1:1 line, dashed = speed limit."),
+  f0(nrow(qt)), q$speed_max))
+add_fig("qc_b_ship_alignment.png", sprintf(paste(
+  "School speed relative to ship speed (log scale) against the difference between school and ship heading.",
+  "The dashed box marks the 'moves with ship' rule (heading within %s°, more than %s x ship speed; the rule also",
+  "requires the ship to steam faster than %s m/s)."), q$ship_hd_max, q$ship_frac, q$ship_speed_min))
+add_fig("qc_d_reasons.png", "Excluded schools by the combination of rules that flagged them.")
+add_fig("qc_c_map.png", "Mean positions of kept (grey) and excluded (red) schools.")
 
-# ---- 4 results ----------------------------------------------------------------------------
+# ---- 4 methods (short) -----------------------------------------------------------------------
+h1("4. Methods")
+para("Each school detection was assigned to a haul phase: search (the ",
+     cfg$pre_shoot_h, " h before shoot) or tow (shoot to haul), and schools within ", cfg$buffer_km, " km of the ship ",
+     "track during the tow were linked to the haul. Indices per haul and phase: schools per hour of the window, school ",
+     "backscatter per hour (10 log10 of summed linear Sv x area; relative), backscatter-weighted Profos depth and the ",
+     "fraction of backscatter in the trawl layer (headline to headline + ", cfg$default_vert_opening, " m, assumed). ",
+     "Tracks were cleaned with a Hampel filter and smoothed with a spline (about one degree of freedom per ", cfg$tau_s,
+     " s) and a constant-velocity Kalman smoother; a school counted as moving when its speed exceeded twice its ",
+     "standard error. Directions were summarised with circular statistics (mean direction, mean resultant length R̄, ",
+     "Rayleigh test). Movement maps use ", cfg$grid_km, "-km grid cells.")
+
+# ---- 5 results --------------------------------------------------------------------------------
 doc <- body_add_break(doc)
-h1("4. Results")
-h2("4.1 Fishing activity and sonar coverage")
-para("The trip fished mackerel east of Shetland and east of Orkney in late October and blue whiting ",
-     "west of the Hebrides in early November (Figure 1). Profos data have so far been exported for one day, ",
-     "which overlaps hauls 7 and 8 (Figure 2). On that day the vessel searched and towed in an area of about ",
-     "20 x 25 km where schools were detected throughout (Figure 3).")
-add_fig("01a_trip_map.png", paste(
-  "Fishing positions of trip", cfg$trip, "(SCH302). Lines join the shoot and haul positions; circles at",
-  "the haul position are sized by catch (t) and coloured by dominant species (mac = mackerel, whb = blue",
-  "whiting, her = herring); numbers are haul numbers. The short black line east of Shetland is the ship",
-  "track for the period with exported sonar data."))
-add_fig("01b_trip_timeline.png", paste(
-  "Hauls of trip", cfg$trip, "over time. Each bar spans shoot to haul time and is placed at the haul's",
-  "catch (t); colour = dominant species, numbers = haul numbers. Yellow bands mark periods with exported",
-  "Profos sonar data."))
-add_fig("01c_sonar_zoom_map.png", paste0(
-  "Ship track and detected schools on ", format(min(ship$t), "%d %B %Y"), ". Track colour: orange = search ",
-  "(", cfg$pre_shoot_h, " h before a shoot), red = tow (shoot to haul), grey = other. Circles are the mean ",
-  "position of each school track, sized by mean school area (m²) and coloured by Profos depth (see ",
-  "Section 4.2 for what this depth represents). Red arrows join the logged shoot and haul positions; ",
-  "labels give haul number, dominant species and catch. Map cropped at ", cfg$map_lat_min, "°N."))
+h1("5. Results")
+h2("5.1 Fishing and sonar coverage")
+para(if (cfg$trip == "2026E") "The trip first fished horse mackerel west of Ireland and then herring east of Shetland and Orkney, where the "
+     else "The trip fished mackerel east of Shetland and Orkney in late October and blue whiting west of the Hebrides in early November; the ",
+     cfg$label, " data were recorded in the first part (Figures ", fig_no_next(), "–", fig_no_next(3), ").")
+add_fig("01a_trip_map.png", paste("Fishing positions of trip", cfg$trip, "(SCH302). Lines join shoot and haul positions;",
+  "circles at the haul position are sized by catch and coloured by dominant species (her = herring, hom = horse",
+  "mackerel, mac = mackerel, whb = blue whiting); numbers are haul numbers. The black line is the", cfg$label, "ship track."))
+add_fig("01b_trip_timeline.png", paste("Hauls of trip", cfg$trip, "over time (bars = shoot to haul, placed at the catch;",
+  "colour = dominant species) and periods with", cfg$label, "data (yellow).",
+  if (cfg$catch_offset_h != 0) sprintf("Haul times shifted by %+g h to the sonar clock.", cfg$catch_offset_h) else ""))
+add_fig("01c_sonar_zoom_map.png", paste0("Ship track and mean positions of the ", f0(n_kept), " schools kept after quality ",
+  "control, sized by school area and coloured by Profos depth. Track colour: orange = search (", cfg$pre_shoot_h,
+  " h before shoot), red = tow, grey = other; red arrows = logged tow lines with haul number, species and catch."))
 
-h2("4.2 What the sonar saw before and during the tows")
-para("School detections occurred in bursts that follow the ship's track through aggregations rather than ",
-     "a steady rate (Figure 4). For haul 7 schools were detected both while searching (",
-     f1(ind[haul == 7 & phase == "search", schools_per_10km]), " per 10 km) and while towing (",
-     f1(ind[haul == 7 & phase == "tow", schools_per_10km]), " per 10 km). Before haul 8 few schools were ",
-     "seen within the buffer of the later tow track (", f1(ind[haul == 8 & phase == "search", schools_per_10km]),
-     " per 10 km), whereas during the tow the rate was the highest of the day (",
-     f1(ind[haul == 8 & phase == "tow", schools_per_10km]), " per 10 km; Table 1, Figure 6).")
-para("Figure 5 shows why the Profos depths must be interpreted with care: every detection lies on the ",
-     "beam-centre line of its tilt. The deeper schools seen around haul 8 are therefore schools at longer ",
-     "range with the −7° tilt rather than evidence of schools moving deeper. Both hauls were fished below ",
-     "the depth the sonar covers at these tilts, so the fraction of school backscatter in the trawl layer ",
-     "is zero by construction. The same applies, more strongly, to the blue whiting hauls (headline depths ",
-     paste(range(hauls[dom_species == "whb", headline_depth]), collapse = "–"), " m).")
-add_fig("02a_timeline_schools_vs_tows.png", paste0(
-  "School detections against time. Upper panel: each school detection (one per ping) by time and Profos ",
-  "depth, coloured by mean volume backscattering strength Sv (dB) and sized by school area (m²). Shading: ",
-  "orange = ", cfg$pre_shoot_h, " h search period before shoot, red = tow. Dashed boxes mark the trawl layer ",
-  "from headline depth to headline + ", cfg$default_vert_opening, " m (assumed vertical opening). Labels give ",
-  "haul number, catch and the share of the dominant species. Lower panel: distinct schools per hour of ",
-  "sonar recording in 10-min bins (bars) and ship speed (line, right axis)."))
-add_fig("02b_depth_vs_range_tilt.png", paste0(
-  "Profos school depth against horizontal range from the ship, by transducer tilt. The detections fall on ",
-  "straight lines (R² = 1.000): Profos depth = range x sin(|tilt|). Solid lines = beam-centre depth with a ",
-  cfg$transducer_depth, " m transducer depth; shaded bands = ±", cfg$vert_beam_half, "° vertical beam ",
-  "(approximate); dashed lines = headline depths of the hauls."))
-add_fig("02c_haul_zoom_maps.png", paste0(
-  "Schools within ", cfg$buffer_km, " km of the tow track for each haul with sonar data. Orange = ship track ",
-  "in the ", cfg$pre_shoot_h, " h before shoot, red = ship track while towing (gaps = no sonar recording), ",
-  "dashed = straight line between logged shoot and haul positions. Circles = school mean positions, sized ",
-  "by school area and coloured by Profos depth."))
+h2("5.2 Sonar versus catch")
+para("School detections and tows over the whole period are shown in Figure ", fig_no_next(), ", and for the busiest day (",
+     format(as.Date(busy_day), "%d %B"), ") in Figure ", fig_no_next(2), "; timelines for every day are in the ",
+     basename(base_dir), " folder. ", if (n_below > 0) paste0(n_below, " of ", nrow(hz), " tows fished with the headline deeper than any school the ",
+     "sonar could detect at these tilts (Figure ", fig_no_next(3), "), so for those hauls the fraction of school ",
+     "backscatter in the trawl layer is zero. ") else paste0("All tows fished with the headline within the depths the sonar could see ",
+     "at these tilts (Figure ", fig_no_next(3), "). "),
+     if (nrow(shallow)) paste0(nrow(shallow), " tows (", paste0("haul ", shallow$haul, ": ", shallow$headline_depth, " m", collapse = ", "),
+                               ") fished well within the depths seen by the sonar") else "No tow fished well within the depths seen by the sonar",
+     if (nrow(edge)) paste0("; the tows at ", paste(unique(range(edge$headline_depth)), collapse = "–"),
+                            " m reach only the deepest detections, at the edge of the range") else "", ".")
+para("Schools were found near every tow (Figure ", fig_no_next(4), ", Table 2). The median rate was ",
+     f1(median(ind[phase == "search"]$schools_per_h)), " schools per hour while searching and ",
+     f1(median(ind[phase == "tow"]$schools_per_h)), " per hour while towing. Neither catch nor catch per hour of towing ",
+     "was related to the school rate, the school backscatter or the Profos depth of either phase (Figure ", fig_no_next(5),
+     "; Spearman |ρ| ≤ ", f2(max_abs_rho), ", n = ", nrow(hz), "). Likely reasons: catch per haul is limited by the ",
+     "skipper's decision and vessel capacity (half of the hauls were ", catch_iqr[1], "–", catch_iqr[2], " t); the sonar does not see the depth layer that ",
+     "was fished; and counts within ", cfg$buffer_km, " km describe the area rather than the fish that entered the net.")
+add_fig("02a_timeline_schools_vs_tows.png", paste0("School detections against time for the whole period. Upper panel: ",
+  "each detection by time and Profos depth, coloured by Sv and sized by school area; red shading = tows, orange = ",
+  cfg$pre_shoot_h, " h search before shoot, dashed boxes = trawl layer; labels = haul numbers. Lower panel: distinct ",
+  "schools per hour of recording (10-min bins) and ship speed (line, right axis)."))
+add_fig(sprintf("02a_timeline_%s.png", busy_day), paste0("As the previous figure, for ", format(as.Date(busy_day), "%d %B %Y"),
+  "; labels give haul number, catch and share of the dominant species."))
+add_fig("02b_depth_vs_range_tilt.png", paste0("Profos school depth against range by tilt. Detections fall exactly on the ",
+  "beam-centre lines (depth = range x sin(|tilt|)); bands = ±", cfg$vert_beam_half, "° vertical beam (approximate); ",
+  "dashed lines = headline depths of the hauls."))
+add_fig("02c_haul_zoom_maps.png", paste0("Schools within ", cfg$buffer_km, " km of each tow (panel title = haul number and ",
+  "catch). Orange = ship track while searching, red = while towing (shown only where schools were detected, as there is no ",
+  "ppe export), dashed arrow = logged tow line; circles = school mean positions coloured by Profos depth. Each panel has ",
+  "equal east–west and north–south extent."))
+ind[!is.finite(sbi_h_db), sbi_h_db := NA]
+ind[, `:=`(catch_t = round(catch), tow_hr = round(tow_h, 1))]
+itab <- dcast(ind, haul + catch_t + tow_hr ~ phase, value.var = c("schools_per_h", "sbi_h_db"))
+setnames(itab, c("Haul", "Catch (t)", "Tow (h)", "Schools/h search", "Schools/h tow", "SBI/h search (dB)", "SBI/h tow (dB)"))
+for (j in 4:7) set(itab, j = j, value = round(itab[[j]], 1))
+add_table(itab, paste0("Sonar indices per haul: schools per hour and school backscatter per hour (SBI; relative) ",
+  "within ", cfg$buffer_km, " km of the tow track, in the ", cfg$pre_shoot_h, " h search before shoot and during the tow. ",
+  "Blank = no schools in that phase."), c(0.5, 0.75, 0.6, 1.0, 0.9, 1.1, 1.0))
+add_fig("02d_catch_vs_sonar_indices.png", "Catch per haul against the sonar indices of the search (circles) and tow (triangles) phases, with linear fits and 95% confidence bands per phase.")
 
-add_table_caption(paste0(
-  "Sonar indices per haul and phase (schools within ", cfg$buffer_km, " km of the tow track). Rec. h = ",
-  "hours of sonar recording; km = distance sailed while recording; SBI = school backscatter index ",
-  "(relative, dB); depth = backscatter-weighted Profos depth (beam-centre depth, see Figure 5)."))
-tab <- ind[, .(Haul = haul, Phase = phase, `Catch (t)` = round(catch), Species = dom_species,
-               `Rec. h` = round(rec_h, 1), km = round(dist_km, 1), Schools = n_schools,
-               `Schools / 10 km` = round(schools_per_10km, 1), `SBI (dB)` = round(sbi_db, 1),
-               `Depth (m)` = round(depth_w), `Ship speed (m/s)` = round(ship_speed, 1))]
-ft <- flextable(tab)
-ft <- theme_booktabs(ft)
-ft <- fontsize(ft, size = 9, part = "all")
-ft <- bold(ft, part = "header")
-ft <- align(ft, align = "center", part = "all")
-ft <- width(ft, width = c(0.45, 0.6, 0.6, 0.6, 0.5, 0.5, 0.6, 0.7, 0.6, 0.6, 0.75))
-doc <- body_add_flextable(doc, ft, align = "center")
-para("")
+h2("5.3 Cleaning and smoothing school tracks")
+para(f0(nrow(mov)), " schools passed the track criteria. Centroid positioning noise was about ", f1(noise_m), " m per axis; ",
+     "the smoothed tracks follow the raw positions closely (Figures ", fig_no_next(), "–", fig_no_next(2), "), and mean speed ",
+     "becomes stable for smoothing time scales of about 20–30 s or more (Figure ", fig_no_next(3), "). ",
+     round(100 * mean(mov$moving)), "% of schools had a speed significantly above zero. Our speeds agree with the LSSS ",
+     "estimates for most schools (Figure ", fig_no_next(4), ").")
+para("Even after exclusion, school velocity along the ship's heading increased slightly with ship speed (slope ",
+     f2(fit_art[2, 1]), ", ", pv(fit_art[2, 4]), "; Figure ", fig_no_next(5), "). The effect is small (about ",
+     f1(fit_art[2, 1] * 5), " m/s at 5 m/s ship speed) but indicates either remaining vessel-related echoes or avoidance; ",
+     "relative to the ship's heading, moving schools swam on average towards ", round(rel_dir$mean_dir), "° (R̄ = ", f2(rel_dir$Rbar), ").")
+add_fig("03a_raw_vs_smoothed_tracks.png", "Raw and smoothed tracks of the six longest-tracked schools (local coordinates, m). Dark points = raw centroids; red = outliers removed; blue = spline; red line = Kalman smoother; triangle = first detection.")
+add_fig("03b_speed_raw_vs_smoothed.png", "Speed over time for the same schools: raw ping-to-ping (grey), spline (blue) and Kalman (red, ±2 SD band). Y-axis truncated at 6 m/s.")
+add_fig("03c_noise_and_smoothing_sensitivity.png", "Left: positioning noise per school against range (loess fit). Right: mean school speed against the spline smoothing time scale (median and interquartile range; log axis); dashed = median regression speed.")
+add_fig("03d_movement_significance.png", "Left: school speed against track duration with ±2 SE bars; black = speed significantly above zero. Right: speed from this analysis against the LSSS Profos school speed; dashed = 1:1.")
+add_fig("03e_ship_motion_artefact_check.png", "Left: school velocity along the ship's heading against ship speed, with linear fit. Right: swimming direction relative to the ship's heading (moving schools).")
 
-h2("4.3 Cleaning and smoothing school tracks")
-para(f0(nrow(mov)), " of ", f0(n_sch_all), " schools passed the quality criteria. The raw centroids scatter ",
-     "around a smooth path (Figure 7); the ", f0(sum(mov$n_outliers)), " outlying detections removed by the ",
-     "Hampel filter are mostly tracker jumps at the start or end of a track. The spline and Kalman ",
-     "smoothers give nearly identical paths. Raw ping-to-ping speeds fluctuate between 0 and more than ",
-     "5 m/s, while the smoothed speeds vary slowly (Figure 8).")
-para("Positioning noise increases with range (Figure 9, left). Mean speed falls steeply as the smoothing ",
-     "time scale grows from 5 to 20 s and is nearly constant beyond 30 s (Figure 9, right): this plateau is ",
-     "where noise has been removed without smoothing away real movement, and supports the ",
-     cfg$tau_s, "-s default. Short tracks cannot resolve speed reliably (Figure 10, left); our speeds agree ",
-     "with the LSSS speeds in the ps file (Figure 10, right).")
-para("Relative to the ship, schools tended to move ahead and to starboard (Figure 11). The component of ",
-     "school velocity along the ship's heading did not depend significantly on ship speed (slope ",
-     f2(fit_art[2, 1]), ", ", pv(fit_art[2, 4]), "), so there is no clear sign of a positioning bias, but ",
-     "avoidance of the vessel cannot be excluded.")
-add_fig("03a_raw_vs_smoothed_tracks.png", paste(
-  "Raw and smoothed tracks of the six longest-tracked schools (local coordinates, m; panel headers give",
-  "the Profos run and school Id). Dark grey points = raw centroids after merging same-ping duplicates; red",
-  "points = outliers removed; blue line = smoothing spline; red line = Kalman smoother; triangle = first",
-  "detection."))
-add_fig("03b_speed_raw_vs_smoothed.png", paste(
-  "Speed over time for the same six schools. Grey = raw ping-to-ping speed; blue = spline speed; red =",
-  "Kalman speed with ±2 SD band. The y-axis is truncated at 6 m/s."))
-add_fig("03c_noise_and_smoothing_sensitivity.png", paste(
-  "Left: centroid positioning noise per school (from second differences) against mean range from the",
-  "ship, with loess fit and 95% confidence band. Right: mean school speed against the spline smoothing",
-  "time scale τ (median and interquartile range over schools; log x-axis); dashed line = median",
-  "straight-line (regression) speed."))
-add_fig("03d_movement_significance.png", paste(
-  "Left: straight-line speed of each school against track duration (log scale) with ±2 SE error bars;",
-  "black = speed significantly above zero. Right: speed from this analysis against the LSSS Profos",
-  "school speed (ps file); dashed = 1:1 line."))
-add_fig("03e_ship_motion_artefact_check.png", paste(
-  "Check for ship-related artefacts, moving schools only. Left: school velocity component along the",
-  "ship's heading against ship speed, with linear fit and 95% confidence band. Right: swimming direction",
-  "relative to the ship's heading."))
+h2("5.4 School movement patterns")
+para("Moving schools (n = ", f0(nrow(mm)), ") swam in all directions over the area as a whole (Figures ", fig_no_next(), "–",
+     fig_no_next(2), "); the gridded field (Figure ", fig_no_next(4), ") shows where neighbouring schools shared a direction. R̄ within haul areas ",
+     "ranged from ", f2(min(haul_st$Rbar)), " to ", f2(max(haul_st$Rbar)), ". Speed ",
+     if (rho_range$p.value < 0.05) "varied" else "did not vary", " with range from the ship (ρ = ", f2(rho_range$estimate),
+     ") and peaked around ", sprintf("%02.0f:00", peak_h), " (Figure ", fig_no_next(3), "). ",
+     round(100 * day_share$day), "% of tracked schools were seen in daylight and ", round(100 * day_share$night), "% at night.")
+add_fig("04a_movement_vector_map.png", sprintf("Movement of schools with significant speed (n = %s). Arrows start at each school's mean position and show the distance swum in 10 min, coloured by speed; dark lines = smoothed tracks; grey = ship track; red dashed = logged tow lines.", f0(nrow(mm))))
+add_fig("04b_direction_roses.png", "Swimming directions (22.5° bins) by ship activity (top) and light condition (bottom). Panel headers give n, mean direction, R̄ and the Rayleigh test p-value.")
+add_fig("04c_speed_vs_covariates.png", "School speed against range (top left), school area (top right, log scale) and hour of day pooled over all days (bottom, sonar clock; cyclic GAM with 95% band), coloured by light condition.")
+add_fig("04d_gridded_movement_field.png", sprintf("Mean school movement per %s km cell. Fill = number of moving schools; arrow = mean velocity (relative length); arrow thickness = R̄ (agreement in direction); grey = ship track.", cfg$grid_km))
+add_fig("04e_figure6_style_all_schools.png", sprintf("Figure 6-style summary using %s-s intervals of the smoothed tracks. Left: interval speed and direction. Right: direction against speed (intervals per bin, log colour scale). Figure %d gives the circular summary of directions.", cfg$interval_s, fig_no - 3))   # caption is evaluated after add_fig increments fig_no
 
-h2("4.4 School movement patterns")
-para("Moving schools swam in all directions over the area as a whole (Figure 12; Figure 13: R̄ = ",
-     f2(cs("all")$Rbar), ", ", pv(cs("all")$rayleigh_p), "). Directions were more consistent during tows (",
-     round(cs("phase: tow")$mean_dir), "°, R̄ = ", f2(cs("phase: tow")$Rbar), ", ", pv(cs("phase: tow")$rayleigh_p),
-     ") and around twilight (", round(cs("sun: twilight")$mean_dir), "°, R̄ = ", f2(cs("sun: twilight")$Rbar),
-     ", n = ", cs("sun: twilight")$n, "), and within the haul areas (Section 1). The gridded field (Figure 15) ",
-     "shows that neighbouring schools often moved the same way while different parts of the area showed ",
-     "different directions, i.e. local movement rather than a common migration.")
-para("Speed was highest before dawn and lowest in the middle of the day (Figure 14, bottom; night median ",
-     spd("night"), " m/s, day ", spd("day"), " m/s). Larger schools were faster, whereas speed was not ",
-     "related to range from the ship (Spearman ρ = ", f2(rho_range$estimate), ", ", pv(rho_range$p.value),
-     "), which suggests that the speed estimates are not driven by range-dependent noise. Light condition ",
-     "and fishing phase are confounded on a single day, so the day–night difference needs confirming ",
-     "with more days.")
-add_fig("04a_movement_vector_map.png", paste0(
-  "Movement of schools with significant speed (n = ", nrow(mm), "). Arrows start at each school's mean ",
-  "position and show the distance swum in 10 min at its estimated velocity, coloured by speed; dark lines = ",
-  "Kalman-smoothed tracks; grey = ship track; red dashed = logged tow lines. Cropped at ", cfg$map_lat_min, "°N."))
-add_fig("04b_direction_roses.png", paste(
-  "Swimming directions (compass bearings, 22.5° bins) of moving schools by ship activity (top: search,",
-  "tow, other) and light condition (bottom: day, twilight, night). Panel headers give the number of",
-  "schools, mean direction, mean resultant length R̄ (0 = no common direction, 1 = identical directions)",
-  "and the Rayleigh test p-value."))
-add_fig("04c_speed_vs_covariates.png", paste(
-  "Speed of moving schools against range from the ship (top left), school area (top right, log scale) and",
-  "time of day (bottom; red = tows), coloured by light condition; black lines = loess fits with 95%",
-  "confidence bands."))
-add_fig("04d_gridded_movement_field.png", paste0(
-  "Mean school movement per ", 1, " km grid cell. Fill = number of moving schools in the cell; arrow = mean ",
-  "velocity (relative length, longest arrow = 40% of a cell); arrow thickness = R̄, i.e. how consistently the ",
-  "schools in a cell moved in the same direction (thin = one school or no agreement); grey = ship track. ",
-  "Cropped at ", cfg$map_lat_min, "°N."))
-add_fig("04e_figure6_style_all_schools.png", paste0(
-  "Figure 6-style summary for all moving schools, using ", cfg$interval_s, "-s intervals of the smoothed ",
-  "tracks. Left: distribution of interval speed and direction. Right: interval direction against speed ",
-  "(number of intervals per bin, log colour scale). A linear box plot is not suitable for directions ",
-  "(0° and 360° are the same direction); Figure 13 gives the circular summary."))
+# ---- 6 limitations ----------------------------------------------------------------------------
+h1("6. Limitations and next steps")
+lead("No ppe export.", "Effort and the ship track come only from pings with schools. Exporting the ppe file from LSSS would ",
+     "give true recording time and distance sailed, and a complete ship track.")
+lead("Range and sector.", sprintf("Detections stop at about %s m and only the forward ±90° sector is present, although the sonar can reach further. Re-processing with a longer range and full sector would exploit the instrument and show schools nearer the fishing depth.", round(max(m_all$range_m), -1)))
+lead("Depth.", "Profos depth is the beam-centre depth; the echosounder is needed to compare schools with the trawl depth.")
+if (cfg$catch_offset_h != 0) lead("Clock.", "The catch log and the sonar clock differ by 1 h on this trip; which one is UTC should be confirmed, as it shifts the hour-of-day results by 1 h.")
+lead("Thresholds.", paste0("The exclusion thresholds were set from the ST90 herring data and are used unchanged for all datasets. They are stored in cfg$qc (00_setup_functions.R) and the flags per school in ", basename(base_dir), "/school_qc.csv, so they can be reviewed and changed."))
+lead("Catch.", "Catch per haul is a coarse response. Linking sonar to catch may work better with net-sonar or trawl-sensor data, or with sonar backscatter scaled to the trawl path rather than a 5-km buffer.")
 
-# ---- 5 caveats + next steps ------------------------------------------------------------------
-h1("5. Limitations and next steps")
-lead("One day of sonar data.", "All sonar results come from ", format(min(ship$t), "%d %B %Y"),
-     " and two mackerel hauls. Export Profos for the rest of the trip (all *-pp, -ps and -ppe files in ",
-     "one folder) and re-run the scripts; Figure 2 shows which hauls then gain sonar coverage.")
-lead("Depth.", "Profos gives no independent school depth. Use the echosounder (EK80) for vertical ",
-     "distribution, or periods with steeper tilt, before comparing schools with fishing depth. For the ",
-     "deep blue whiting hauls the omnidirectional sonar mainly informs on the surface layer.")
-lead("Relative indices.", "Sv, school area and the backscatter index are uncalibrated and relative; they ",
-     "are suitable for comparing hauls on the same vessel and settings, not for biomass.")
-lead("Trawl geometry.", "Vertical net opening is not recorded in the catch file; an opening of ",
-     cfg$default_vert_opening, " m was assumed. Net sonar or trawl-sensor data would sharpen the depth comparison.")
-lead("Tracking.", "Profos can split or merge schools and restart Ids between runs (handled by run-specific ",
-     "school keys). Smoothed tracks are very straight (median straightness ",
-     f2(median(mov$straightness, na.rm = TRUE)), ") partly because the Kalman model assumes nearly ",
-     "constant velocity over a track of about a minute.")
-lead("Statistics with more hauls.", "With the whole trip, model catch (or catch rate) against sonar ",
-     "indices from the search and tow phases, e.g. with a GAM including species and time of day, and test ",
-     "the day–night speed difference and vessel-avoidance hypothesis with day and haul as random effects.")
-
-# ---- appendix --------------------------------------------------------------------------------
-h1("Appendix: scripts")
-para("All analyses are in the RStudio project sonar_catch_R (GitHub: ssakinan/sonar_catch_R). Settings are ",
-     "in cfg at the top of 00_setup_functions.R. Run the scripts in order; 05_report.R re-runs 01–04 ",
-     "without plot titles and rebuilds this document.")
-apx <- data.table(
-  Script = c("00_setup_functions.R", "01_overview_maps.R", "02_sonar_catch_link.R",
-             "03_school_track_smoothing.R", "04_school_movement_patterns.R", "05_report.R"),
-  Content = c("Settings, file readers, sonar effort, smoothing, circular statistics",
-              "Trip map, haul and sonar timeline, sonar zoom map (Figures 1–3)",
-              "School timeline, depth geometry, haul zooms, per-haul indices (Figures 4–6, Table 1)",
-              "Outlier removal, noise estimate, spline and Kalman smoothing, speed significance (Figures 7–11)",
-              "Movement vectors, direction roses, speed covariates, gridded field (Figures 12–16)",
-              "This report"))
-ft2 <- flextable(apx)
-ft2 <- theme_booktabs(ft2)
-ft2 <- fontsize(ft2, size = 9, part = "all")
-ft2 <- bold(ft2, part = "header")
-ft2 <- width(ft2, width = c(2.2, 4.0))
-doc <- body_add_flextable(doc, ft2, align = "left")
+h1("Appendix: scripts and animations")
+para("Run with sonar_profile <- \"", sonar_profile, "\": 00b_school_qc.R (exclusions), 01–04 (figures), 05_report.R (this ",
+     "report), 06_school_animation.R and 07_vessel_school_animation.R (animations in ", basename(base_dir), "/animation; the vessel ",
+     "animations are split into one video per day), 08 (daytime migration) and 09 (CMEMS currents).")
 
 print(doc, target = out_docx)
 Sys.unsetenv("SONAR_REPORT")
