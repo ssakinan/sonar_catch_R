@@ -26,6 +26,8 @@ cmp <- rd("output_compare/compare_summary.csv")
 cdr <- rd("output_compare/compare_drift.csv")
 ccr <- rd("output_compare/compare_catch_correlations.csv")
 prs <- rd("output_compare/compare_matched_schools.csv")
+mst <- rd("output_compare/compare_matched_stats.csv")
+M <- function(i) mst[item == i]$value
 mig <- rd("output_ST90/migration/migration_estimates.csv")
 loo <- mig[grepl("^Without", model)]
 
@@ -89,9 +91,20 @@ bl("ST90, 2026: daytime migration.", sprintf("Daytime schools show a net drift o
    f1(st_g$km_day), st_g$dir, st_g$dir_lo, st_g$dir_hi, loo_rng[1], loo_rng[2]))
 bl("Current or swimming?", sprintf("The CMEMS current at the schools is weak and points south-east (%s km/day towards %.0f°), so it does not explain the drift. Swimming relative to the water is %s km/day towards %.0f° (95%% CI %.0f–%.0f°), robust to the depth of the current used and to the clock offset. Schools follow the model tide only partly (60–80%%).",
    f1(st_c$km_day), st_c$dir, f1(st_w$km_day), st_w$dir, st_w$dir_lo, st_w$dir_hi))
-bl("ST90 versus SU90, 2026.", sprintf("The SU90 clock runs 1 h 03 min 38 s behind the ST90 (found from the ship positions in both exports) and was aligned before comparison. Hourly school counts are correlated (ρ = 0.56) and %s schools were tracked by both sonars; their velocities agree moderately (r = %s east, %s north). The SU90 independently gives the same picture: drift %s km/day towards %.0f° (%.0f° from the ST90), swimming %s km/day towards %.0f°, current %s km/day towards %.0f°. Neither sonar predicts catch (|ρ| ≤ %s).",
-   f0(nrow(prs)), f2(cv["x"]), f2(cv["y"]), f1(su_g$km_day), su_g$dir, ang(su_g$dir, st_g$dir), f1(su_w$km_day), su_w$dir,
-   f1(su_c$km_day), su_c$dir, f2(max(abs(ccr$rho)))))
+bl("ST90 versus SU90, 2026.", sprintf("The SU90 clock runs 1 h 03 min 38 s behind the ST90 (found from the ship positions in both exports) and was aligned before comparison. Hourly school counts are correlated (ρ = 0.56). The SU90 independently gives the same picture: drift %s km/day towards %.0f° (%.0f° from the ST90), swimming %s km/day towards %.0f°, current %s km/day towards %.0f°. Neither sonar predicts catch (|ρ| ≤ %s).",
+   f1(su_g$km_day), su_g$dir, ang(su_g$dir, st_g$dir), f1(su_w$km_day), su_w$dir, f1(su_c$km_day), su_c$dir, f2(max(abs(ccr$rho)))))
+bl("Same schools, two sonars.", sprintf(paste(
+   "%s schools were tracked by both sonars at the same time and place (%.0f%% of ST90 and %.0f%% of SU90 schools). The overlap",
+   "is low mainly because the beams were tilted differently (ST90 %.0f°, SU90 %.0f°) and look at different depths; large, dense",
+   "schools are the ones seen by both. A school in both beams must reach the band where they overlap, about %.0f–%.0f m, while",
+   "Profos reports %.0f m and %.0f m for the same school. The SU90 reads %.1f dB higher Sv (+%.1f dB per 100 m range) and %.0f%%",
+   "of the ST90 school area, so the two are not interchangeable without inter-calibration. Velocities agree without bias;",
+   "the paired differences put the velocity error of one sonar at about %.2f m/s per component (%.2f m/s for tracks over",
+   "2 min), so single-school directions are uncertain while averages over many schools are reliable."),
+   f0(M("pairs")), 100 * M("ST90 share matched"), 100 * M("SU90 share matched"), M("ST90 modal tilt"), M("SU90 modal tilt"),
+   M("median depth bound low (m)"), M("median depth bound high (m)"), median(prs$depth_st), median(prs$depth_su),
+   M("median Sv SU90 - ST90 (dB)"), M("Sv difference per 100 m range (dB)"), 100 * 10^M("median log10 area ratio SU90/ST90"),
+   M("velocity error per sonar, robust (m/s)"), prs[pmin(duration_s_st, duration_s_su) > 120, mad(c(vx_su - vx_st, vy_su - vy_st)) / sqrt(2)]))
 
 tab <- data.table(
   ` ` = c("Period", "Tracked schools (after QC)", "Median smoothed speed (m/s)", "Daytime drift over ground", "Swimming relative to CMEMS", "Max |ρ| school count or backscatter vs catch"),
@@ -114,7 +127,7 @@ bl("Movement.", "Smoothing is essential: smoothed tracks give realistic speeds (
 bl("Data quality.", "Profos depth is the beam-centre depth (range × sin tilt): the same school is reported at ~29 m by the ST90 and ~63 m by the SU90. Clocks differ: the ST90 is about 1 h ahead of the catch log and the SU90.")
 
 h("Next steps")
-bl("Export settings.", "Re-export with the full sector and longer range, and the per-ping effort file (ppe), which the current exports lack.")
+bl("Export settings.", "Re-export with the full sector and longer range, and the per-ping effort file (ppe), which the current exports lack. Set the two sonars' tilts on purpose (same tilt to count the same schools, different tilts to cover two layers) and inter-calibrate them.")
 bl("Clocks and depth.", "Fix all clocks to UTC at source. Use the vertical fan or echosounder for true school depth to compare with headline depth.")
 bl("More data.", "Repeat the migration analysis on other trips and years to see whether the westward movement recurs at this time of year, and validate the swimming estimate against current measurements (e.g. ADCP).")
 bl("Outputs.", "Reports: output/SCH302_sonar_catch_report.docx, output_ST90/SCH302_ST90_sonar_catch_report.docx, output_ST90/migration/ (migration and CMEMS documents), output_compare/SCH302_ST90_vs_SU90.docx; animations in output*/animation.")
