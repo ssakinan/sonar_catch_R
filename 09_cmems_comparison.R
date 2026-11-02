@@ -37,6 +37,7 @@ set.seed(1)
 base <- sub("/report_figs$", "", cfg$out_dir)
 out  <- file.path(base, "migration")
 nc_dir <- file.path(base, "cmems")
+if (!dir.exists(nc_dir)) nc_dir <- "output_ST90/cmems"   # SU90_2026: same box and period as ST90
 dir.create(out, showWarnings = FALSE, recursive = TRUE)
 if (!file.exists(file.path(nc_dir, "nws_cur_hourly.nc")))
   stop("CMEMS files missing: run  python 09a_cmems_download.py  from the project root first")
@@ -90,6 +91,7 @@ lag_scan <- rbindlist(lapply(lags_h, function(L) {
 }))
 best_lag <- lag_scan[which.max(r), lag_h]
 lag_use  <- round(best_lag)                   # clock offsets are whole hours
+if (nzchar(Sys.getenv("CMEMS_LAG_H"))) lag_use <- as.numeric(Sys.getenv("CMEMS_LAG_H"))   # fixed offset, e.g. from another sonar
 message(sprintf("Best sonar clock - UTC offset: %+.2f h (r = %.2f); using %+d h", best_lag, max(lag_scan$r), lag_use))
 
 # ---- model current at each school ------------------------------------------------------------------

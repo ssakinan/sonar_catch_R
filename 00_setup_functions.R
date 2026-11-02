@@ -62,6 +62,7 @@ cfg <- list(
   buffer_km     = 5,         # max distance of school from the tow track
   default_vert_opening = 30, # m, used when vert_opening is NA
   catch_offset_h = 0,        # hours added to catch-file shoot/haul times to match the sonar clock
+  clock_shift_s  = 0,        # seconds added to Profos times (puts a second sonar on the first one's clock)
 
   # map display (plots only -- does not remove data from any analysis)
   map_lat_min   = 60.12,     # southern limit of sonar maps; NULL = no limit
@@ -100,8 +101,13 @@ profiles <- list(
       ship_speed_min = 3,     #   faster than this (m/s)
       jump_max       = 30,    # step between consecutive cleaned pings faster than this (m/s): tracker jump
       area_z_max     = 4      # |robust z| of log school area above this
-    ))
-)
+    )))
+# SU90 on the same trip and period as ST90: same settings and QC, so the two sonars compare like for like.
+# Its clock runs 1 h 03 min 38 s behind the ST90 (ship positions in the two exports agree to ~15 m at this
+# shift, stable from day to day), so its times are moved onto the ST90 clock.
+profiles$SU90_2026 <- modifyList(profiles$ST90, list(
+  label = "SU90", profos_dir = "D:/SONAR/Reports/profos/SU90June2026", out_dir = "output_SU90_2026",
+  clock_shift_s = 3818))
 if (!exists("sonar_profile")) sonar_profile <- Sys.getenv("SONAR_PROFILE", "SU90")
 if (!sonar_profile %in% names(profiles)) stop("Unknown sonar_profile: ", sonar_profile)
 cfg <- modifyList(cfg, profiles[[sonar_profile]])
@@ -136,7 +142,7 @@ if (report_mode) theme_update(plot.title = element_blank(), plot.subtitle = elem
 
 # Read and stack all Profos exports of one type in a directory.
 # Adds: run (file prefix), sid (unique school key across runs), t (POSIXct UTC)
-read_profos <- function(dir, type = c("pp", "ps", "ppe")) {
+read_profos <- function(dir, type = c("pp", "ps", "ppe"), shift_s = cfg$clock_shift_s) {
   type  <- match.arg(type)
   files <- list.files(dir, pattern = paste0("-", type, "\\.txt$"),
                       full.names = TRUE, recursive = TRUE)
@@ -163,12 +169,12 @@ read_profos <- function(dir, type = c("pp", "ps", "ppe")) {
 
   if (type == "ps") {
     dt[, t_start := as.POSIXct(paste(StartDate, StartTime), tz = "UTC",
-                               format = "%Y-%m-%d %H:%M:%OS")]
+                               format = "%Y-%m-%d %H:%M:%OS") + shift_s]
     dt[, t_stop  := as.POSIXct(paste(StopDate, StopTime), tz = "UTC",
-                               format = "%Y-%m-%d %H:%M:%OS")]
+                               format = "%Y-%m-%d %H:%M:%OS") + shift_s]
   } else {
     dt[, t := as.POSIXct(paste(Date, Time), tz = "UTC",
-                         format = "%Y-%m-%d %H:%M:%OS")]
+                         format = "%Y-%m-%d %H:%M:%OS") + shift_s]
   }
   dt[!is.na(Id), sid := paste(run, Id, sep = "_")]
   dt[]

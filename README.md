@@ -6,6 +6,7 @@ Two sonar datasets are supported as **profiles** (settings in `cfg` and `profile
 |---|---|---|---|---|
 | `SU90` (default) | Simrad SU90 | `C:/Drive/Sonar/October2025/profos` (23 Oct 2025) | 2025K, mackerel | `output/` |
 | `ST90` | Simrad ST90 | `D:/SONAR/Reports/profos/ST90June2026` (28 Jun – 5 Jul 2026) | 2026E, herring | `output_ST90/` |
+| `SU90_2026` | Simrad SU90 | `D:/SONAR/Reports/profos/SU90June2026` (same period) | 2026E, herring | `output_SU90_2026/` |
 
 Choose the profile before sourcing a script, e.g. in the RStudio console:
 
@@ -32,6 +33,8 @@ Without `sonar_profile` (or the `SONAR_PROFILE` environment variable) the SU90 p
 | `08_daytime_migration.R` | is there a migration signal in daytime movement? (net drift after removing tide and vessel effect) | `migration/` figures 08a–08f, `08_migration_summary.png`, `08_daytime_flow.mp4`, `SCH302_ST90_daytime_migration.docx`, estimate tables |
 | `09a_cmems_download.py` | download CMEMS North-West Shelf model currents (hourly + daily mean, 0–75 m) for the survey box | `output_ST90/cmems/*.nc` |
 | `09_cmems_comparison.R` | is the daytime drift current or swimming? (model current at each school; swimming = ground − current; clock check against the model tide) | `migration/` figures 09a–09f, `09_cmems_summary.png`, `cmems_estimates.csv`, `SCH302_ST90_cmems_comparison.docx` |
+
+| `10_compare_sonars.R` | ST90 vs SU90 on the same period: detections, school properties, schools tracked by both, drift/swimming, catch (run 00b, 01–04, 08, 09 for both profiles first; for SU90_2026 run 09 with `CMEMS_LAG_H=1` to use the ST90 clock offset) | `output_compare/` figures 10a–10f, `10_sonar_comparison_summary.png`, `SCH302_ST90_vs_SU90.docx` |
 
 The CMEMS download needs the Copernicus Marine toolbox and a saved login (`python -m pip install --user copernicusmarine`, then `copernicusmarine login` once).
 
@@ -64,6 +67,7 @@ source("07_vessel_school_animation.R")
 - `Center.dep` = range × sin(|tilt|) exactly (R² = 1) for both sonars: it is the beam-centre depth, not a measured school depth.
 - Raw ping-to-ping centroid noise is ~3–5 m per axis; raw speeds are meaningless, smoothed speeds stabilise for tau ≥ 20–30 s.
 - Profos `Ship.speed` is in m/s.
-- Catch-file times: equal to the sonar clock for trip 2025K; **1 h behind** the sonar clock for trip 2026E (`catch_offset_h = 1` in the ST90 profile).
+- Catch-file times: equal to the sonar clock for trip 2025K; **1 h behind** the ST90 clock for trip 2026E (`catch_offset_h = 1` in the ST90 profile).
+- On trip 2026E the SU90 clock runs **1 h 03 min 38 s behind** the ST90 (ship positions in the two exports align at this shift, stable over the trip); the SU90_2026 profile moves its times onto the ST90 clock (`clock_shift_s = 3818`). The SU90 and catch-log clocks are therefore probably near UTC and the ST90 about 1 h ahead.
 - The ST90 export has no ppe file (track/effort only from pings with schools; indices per hour instead of per km), spaces in the File column (handled by the reader), a ~590 m range limit and only the forward ±90° sector.
 - Haul ids such as `2026E-41` are read by `fread` as numbers unless `colClasses = list(character = "haul_id")` is given.
