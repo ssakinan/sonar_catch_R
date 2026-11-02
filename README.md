@@ -30,6 +30,10 @@ Without `sonar_profile` (or the `SONAR_PROFILE` environment variable) the SU90 p
 | `06_school_animation.R` | all smoothed tracks from a common start time | `animation/schools_*.mp4` |
 | `07_vessel_school_animation.R` | vessel and schools in real time | `animation/vessel_schools_*.mp4` (one per day for multi-day data) |
 | `08_daytime_migration.R` | is there a migration signal in daytime movement? (net drift after removing tide and vessel effect) | `migration/` figures 08a–08f, `08_migration_summary.png`, `08_daytime_flow.mp4`, `SCH302_ST90_daytime_migration.docx`, estimate tables |
+| `09a_cmems_download.py` | download CMEMS North-West Shelf model currents (hourly + daily mean, 0–75 m) for the survey box | `output_ST90/cmems/*.nc` |
+| `09_cmems_comparison.R` | is the daytime drift current or swimming? (model current at each school; swimming = ground − current; clock check against the model tide) | `migration/` figures 09a–09f, `09_cmems_summary.png`, `cmems_estimates.csv`, `SCH302_ST90_cmems_comparison.docx` |
+
+The CMEMS download needs the Copernicus Marine toolbox and a saved login (`python -m pip install --user copernicusmarine`, then `copernicusmarine login` once).
 
 The report scripts re-run the analysis scripts without plot titles, so the captions go below each figure (`SKIP_FIGURES=1` reuses existing figures).
 
