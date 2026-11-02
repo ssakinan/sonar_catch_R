@@ -34,6 +34,7 @@ Without `sonar_profile` (or the `SONAR_PROFILE` environment variable) the SU90 p
 | `09a_cmems_download.py` | download CMEMS North-West Shelf model currents (hourly + daily mean, 0–75 m) for the survey box | `output_ST90/cmems/*.nc` |
 | `09_cmems_comparison.R` | is the daytime drift current or swimming? (model current at each school; swimming = ground − current; clock check against the model tide) | `migration/` figures 09a–09f, `09_cmems_summary.png`, `cmems_estimates.csv`, `SCH302_ST90_cmems_comparison.docx` |
 
+| `11_project_summary.R` | two-page summary of all analyses (run after 00b–10) | `SCH302_sonar_summary.docx` |
 | `10_compare_sonars.R` | ST90 vs SU90 on the same period: detections, school properties, schools tracked by both, drift/swimming, catch (run 00b, 01–04, 08, 09 for both profiles first; for SU90_2026 run 09 with `CMEMS_LAG_H=1` to use the ST90 clock offset) | `output_compare/` figures 10a–10f, `10_sonar_comparison_summary.png`, `SCH302_ST90_vs_SU90.docx` |
 
 The CMEMS download needs the Copernicus Marine toolbox and a saved login (`python -m pip install --user copernicusmarine`, then `copernicusmarine login` once).
