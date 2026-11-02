@@ -95,7 +95,8 @@ species  <- if (cfg$trip == "2025K") "mackerel" else "herring"
 sp_tab   <- hz[, .N, by = dom_species][order(-N)]
 sp_name  <- c(mac = "mackerel", her = "herring", hom = "horse mackerel", whb = "blue whiting")
 sp_txt   <- paste0(sp_tab$N, " ", ifelse(is.na(sp_name[sp_tab$dom_species]), sp_tab$dom_species, sp_name[sp_tab$dom_species]), collapse = ", ")
-ship_mode <- mean(qt$speed_lm > 5, na.rm = TRUE) > 0.05      # second speed mode at steaming speed?
+# second speed mode at steaming speed? (as many tracks at 5-8 m/s as at 2.5-4 m/s: ST90 0.93, SU90 0.22-0.25)
+ship_mode <- qt[, sum(speed_lm > 5 & speed_lm < 8) / sum(speed_lm > 2.5 & speed_lm < 4)] > 0.5
 ping_int  <- median(diff(sort(unique(as.numeric(raw$t)))))
 has_space <- any(grepl(" ", raw$File))
 rel_dir   <- circ_summary((mm$bearing_lm - mm$ship_bearing) %% 360)
