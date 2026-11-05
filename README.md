@@ -34,6 +34,7 @@ Without `sonar_profile` (or the `SONAR_PROFILE` environment variable) the SU90 p
 | `09_cmems_comparison.R` | is the daytime drift current or swimming? (model current at each school; swimming = ground − current; clock check against the model tide) | `migration/` figures 09a–09f, `09_cmems_summary.png`, `cmems_estimates.csv`, `SCH302_ST90_cmems_comparison.docx` |
 
 | `10b_matched_schools.R` | schools tracked by both ST90 and SU90: overlap, beam geometry and depth bounds, Sv/size differences, velocity error per sonar | `output_compare/` figures 10g–10k, `10b_matched_summary.png`, `SCH302_matched_schools.docx` |
+| `12_report_figures.R` | figures for chapter 4 of the pelAcoustics 2026 report | `output_compare/report_chapter4/` |
 | `11_project_summary.R` | two-page summary of all analyses (run after 00b–10) | `SCH302_sonar_summary.docx` |
 | `10_compare_sonars.R` | ST90 vs SU90 on the same period: detections, school properties, schools tracked by both, drift/swimming, catch (run 00b, 01–04, 08, 09 for both profiles first; for SU90_2026 run 09 with `CMEMS_LAG_H=1` to use the ST90 clock offset) | `output_compare/` figures 10a–10f, `10_sonar_comparison_summary.png`, `SCH302_ST90_vs_SU90.docx` |
 
