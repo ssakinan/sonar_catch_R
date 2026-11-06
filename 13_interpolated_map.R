@@ -74,7 +74,7 @@ p <- ggplot() +
   geom_tile(data = grid, aes(lon, lat, fill = db), width = grid_n[["lon"]] * 1.02, height = grid_n[["lat"]] * 1.02) +
   geom_path(data = ship, aes(lon, lat), colour = "white", linewidth = 0.15, alpha = 0.7) +
   geom_sf(data = land, fill = "grey85", colour = "grey55", linewidth = 0.2) +
-  scale_fill_viridis_c(option = "viridis", limits = lims, oob = scales::squish, name = "School backscatter\nper ping (relative dB)") +
+  scale_fill_viridis_c(option = "viridis", limits = lims, oob = scales::squish, name = "School\nbackscatter\nper ping\n(relative dB)") +
   labs(x = NULL, y = NULL) + theme_map
 # ---- bubble plot: same grid resolution, along the ship's track, not interpolated ---------------------
 sxy <- to_xy(m$ship_lon, m$ship_lat, lon0, lat0) / 1000
