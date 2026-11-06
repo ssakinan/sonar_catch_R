@@ -83,11 +83,11 @@ db_breaks <- pretty(lims, 4); db_breaks <- db_breaks[db_breaks >= lims[1] & db_b
 pb <- ggplot() +
   geom_path(data = ship, aes(lon, lat, group = seg), colour = "grey70", linewidth = 0.2) +
   geom_sf(data = land, fill = "grey85", colour = "grey55", linewidth = 0.2) +
-  geom_point(data = bub, aes(lon, lat, size = db_s, fill = db_s), shape = 21, colour = "grey25", stroke = 0.15, alpha = 0.9) +
+  geom_point(data = bub, aes(lon, lat, size = db_s, fill = db_s), shape = 21, colour = "grey25", stroke = 0.15, alpha = 0.8) +
   scale_fill_viridis_c(option = "viridis", limits = lims, breaks = db_breaks,
                        name = "School backscatter
 per ping (relative dB)", guide = "legend") +
-  scale_size_continuous(range = c(0.4, 3.4), limits = lims, breaks = db_breaks,
+  scale_radius(range = c(0.3, 8), limits = lims, breaks = db_breaks,
                         name = "School backscatter
 per ping (relative dB)") +
   ext +
