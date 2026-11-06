@@ -16,7 +16,7 @@
 # Output: <out_dir>/13_interpolated_backscatter_map.png, 13_track_bubble_map.png
 ################################################################################
 
-if (!exists("sonar_profile")) sonar_profile <- "ST90"
+if (!exists("sonar_profile")) sonar_profile <- Sys.getenv("SONAR_PROFILE", "ST90")
 source("00_setup_functions.R")   # run from the RStudio project root
 
 cell_km   <- 2      # grid cell for binning
@@ -63,7 +63,7 @@ theme_map <- theme_bw(base_size = 8, base_family = "Verdana") +
 save_map <- function(p, file, report_file) {      # no titles: the captions go below the figures in the report
   ggsave(file.path(base, file), p, device = ragg::agg_png, width = 15.9 / 2.54, height = 12.6 / 2.54, dpi = 300)
   rep_dir <- "output_compare/report_chapter4"
-  if (sonar_profile == "ST90" && dir.exists(rep_dir)) file.copy(file.path(base, file), file.path(rep_dir, report_file), overwrite = TRUE)
+  if (sonar_profile == "ST90" && !is.null(report_file) && dir.exists(rep_dir)) invisible(file.copy(file.path(base, file), file.path(rep_dir, report_file), overwrite = TRUE))
 }
 # ship track: all ship positions stored with the school pings of this sonar, plus the second sonar of the
 # same trip (no ppe export, so the track has gaps without schools; the line joins them with straight sections)
@@ -83,26 +83,17 @@ bub <- m[, .(pings = uniqueN(t), sb = sum(backscatter, na.rm = TRUE), lon = mean
          by = .(sgx, sgy)][pings >= min_pings]
 bub[, db := 10 * log10(sb / pings)]
 bub <- bub[is.finite(db)][order(db)]          # strongest cells drawn last
-bub[, db_s := scales::squish(db, lims)]       # same limits as the map, for colour and size
 # same extent for both plots
 ext <- coord_sf(xlim = map_lon, ylim = map_lat, expand = FALSE)
 save_map(p + ext, "13_interpolated_backscatter_map.png", "Figure_45_interpolated_map.png")
-db_breaks <- pretty(lims, 4); db_breaks <- db_breaks[db_breaks >= lims[1] & db_breaks <= lims[2]]
+# one colour; size follows the full range of values (no squish)
 pb <- ggplot() +
   geom_path(data = ship, aes(lon, lat), colour = "grey30", linewidth = 0.25) +
   geom_sf(data = land, fill = "grey85", colour = "grey55", linewidth = 0.2) +
-  geom_point(data = bub, aes(lon, lat, size = db_s, fill = db_s), shape = 21, colour = "grey25", stroke = 0.15, alpha = 0.8) +
-  scale_fill_viridis_c(option = "viridis", limits = lims, breaks = db_breaks,
-                       name = "School
-backscatter
-per ping
-(relative dB)", guide = "legend") +
-  scale_radius(range = c(0.15, 3.6), limits = lims, breaks = db_breaks,
-                        name = "School
-backscatter
-per ping
-(relative dB)") +
+  geom_point(data = bub, aes(lon, lat, size = db), shape = 21, fill = "#0072B2", colour = "white", stroke = 0.15, alpha = 0.6) +
+  scale_radius(range = c(0.2, 4), limits = range(bub$db), breaks = pretty(bub$db, 5),
+               name = "School\nbackscatter\nper ping\n(relative dB)") +
   ext +
   labs(x = NULL, y = NULL) + theme_map
-save_map(pb, "13_track_bubble_map.png", "Figure_46_track_bubbles.png")
+save_map(pb, "13_track_bubble_map.png", NULL)
 message(sprintf("13: done; %d bubbles", nrow(bub)))
