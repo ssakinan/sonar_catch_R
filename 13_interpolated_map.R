@@ -57,6 +57,14 @@ message(sprintf("%d cells, %d pings with schools; colour range %.1f to %.1f dB (
 
 # ---- map -------------------------------------------------------------------------------------------
 land <- rnaturalearth::ne_countries(scale = "large", returnclass = "sf")
+theme_map <- theme_bw(base_size = 8, base_family = "Verdana") +
+  theme(panel.background = element_rect(fill = "grey97"), panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(colour = "grey90"), legend.position = "right")
+save_map <- function(p, file, report_file) {      # no titles: the captions go below the figures in the report
+  ggsave(file.path(base, file), p, device = ragg::agg_png, width = 15.9 / 2.54, height = 12.6 / 2.54, dpi = 300)
+  rep_dir <- "output_compare/report_chapter4"
+  if (sonar_profile == "ST90" && dir.exists(rep_dir)) file.copy(file.path(base, file), file.path(rep_dir, report_file), overwrite = TRUE)
+}
 # ship track: all ship positions stored with the school pings of this sonar, plus the second sonar of the
 # same trip (no ppe export, so the track has gaps without schools; the line joins them with straight sections)
 track_files <- unique(c(file.path(base, "school_tracks.rds"), if (cfg$trip == "2026E") c("output_ST90/school_tracks.rds", "output_SU90_2026/school_tracks.rds")))
@@ -67,11 +75,7 @@ p <- ggplot() +
   geom_path(data = ship, aes(lon, lat), colour = "white", linewidth = 0.15, alpha = 0.7) +
   geom_sf(data = land, fill = "grey85", colour = "grey55", linewidth = 0.2) +
   scale_fill_viridis_c(option = "viridis", limits = lims, oob = scales::squish, name = "School backscatter\nper ping (relative dB)") +
-  labs(x = NULL, y = NULL,
-       title = sprintf("%s school backscatter, %s - %s", cfg$label, format(min(m$t), "%d %b"), format(max(m$t), "%d %b %Y")),
-       subtitle = sprintf("%d-km cells smoothed with a %d-km Gaussian kernel, weighted by pings; blank = too few data within %d km; white = ship track; colours squished to the 5-95%% range",
-                          cell_km, bw_km, mask_km)) +
-  theme(plot.subtitle = element_text(size = 8), panel.background = element_rect(fill = "grey97"))
+  labs(x = NULL, y = NULL) + theme_map
 # ---- bubble plot: same grid resolution, along the ship's track, not interpolated ---------------------
 sxy <- to_xy(m$ship_lon, m$ship_lat, lon0, lat0) / 1000
 m[, `:=`(sgx = floor(sxy[, 1] / cell_km), sgy = floor(sxy[, 2] / cell_km))]
@@ -82,23 +86,23 @@ bub <- bub[is.finite(db)][order(db)]          # strongest cells drawn last
 bub[, db_s := scales::squish(db, lims)]       # same limits as the map, for colour and size
 # same extent for both plots
 ext <- coord_sf(xlim = map_lon, ylim = map_lat, expand = FALSE)
-ggsave(file.path(base, "13_interpolated_backscatter_map.png"), p + ext, width = 9, height = 7, dpi = 250)
+save_map(p + ext, "13_interpolated_backscatter_map.png", "Figure_45_interpolated_map.png")
 db_breaks <- pretty(lims, 4); db_breaks <- db_breaks[db_breaks >= lims[1] & db_breaks <= lims[2]]
 pb <- ggplot() +
-  geom_path(data = ship, aes(lon, lat), colour = "grey30", linewidth = 0.3) +
+  geom_path(data = ship, aes(lon, lat), colour = "grey30", linewidth = 0.25) +
   geom_sf(data = land, fill = "grey85", colour = "grey55", linewidth = 0.2) +
   geom_point(data = bub, aes(lon, lat, size = db_s, fill = db_s), shape = 21, colour = "grey25", stroke = 0.15, alpha = 0.8) +
   scale_fill_viridis_c(option = "viridis", limits = lims, breaks = db_breaks,
-                       name = "School backscatter
-per ping (relative dB)", guide = "legend") +
-  scale_radius(range = c(0.2, 5), limits = lims, breaks = db_breaks,
-                        name = "School backscatter
-per ping (relative dB)") +
+                       name = "School
+backscatter
+per ping
+(relative dB)", guide = "legend") +
+  scale_radius(range = c(0.15, 3.6), limits = lims, breaks = db_breaks,
+                        name = "School
+backscatter
+per ping
+(relative dB)") +
   ext +
-  labs(x = NULL, y = NULL,
-       title = sprintf("%s school backscatter along the ship's track, %s - %s", cfg$label, format(min(m$t), "%d %b"), format(max(m$t), "%d %b %Y")),
-       subtitle = sprintf("One bubble per %d-km cell the ship passed through (at least %d pings with schools); not interpolated; same colour limits as the map; line = ship track",
-                          cell_km, min_pings)) +
-  theme(plot.subtitle = element_text(size = 8), panel.background = element_rect(fill = "grey97"))
-ggsave(file.path(base, "13_track_bubble_map.png"), pb, width = 9, height = 7, dpi = 250)
+  labs(x = NULL, y = NULL) + theme_map
+save_map(pb, "13_track_bubble_map.png", "Figure_46_track_bubbles.png")
 message(sprintf("13: done; %d bubbles", nrow(bub)))
