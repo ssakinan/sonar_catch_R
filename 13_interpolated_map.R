@@ -26,6 +26,8 @@ min_near  <- 30     # pings needed within mask_km of a grid point
 mask_km   <- 9      # blank beyond this distance from the nearest cell with data
 min_pings <- 5      # pings per cell to use it
 squish_q  <- c(0.05, 0.95)
+map_lon   <- c(-4.2, 1.6)   # map borders: north of Scotland, Orkney and Shetland
+map_lat   <- c(58.2, 60.95)
 grid_n    <- c(lon = 0.015, lat = 0.008)   # output grid (deg), about 0.9 km
 
 base <- sub("/report_figs$", "", cfg$out_dir)
@@ -55,12 +57,14 @@ message(sprintf("%d cells, %d pings with schools; colour range %.1f to %.1f dB (
 
 # ---- map -------------------------------------------------------------------------------------------
 land <- rnaturalearth::ne_countries(scale = "large", returnclass = "sf")
-ship <- unique(m[, .(t, lon = ship_lon, lat = ship_lat)], by = "t")[order(t)]
-ship[, seg := cumsum(c(0, diff(as.numeric(t))) > cfg$gap_s)]
-ship <- ship[seq(1, .N, 5)]
+# ship track: all ship positions stored with the school pings of this sonar, plus the second sonar of the
+# same trip (no ppe export, so the track has gaps without schools; the line joins them with straight sections)
+track_files <- unique(c(file.path(base, "school_tracks.rds"), if (cfg$trip == "2026E") c("output_ST90/school_tracks.rds", "output_SU90_2026/school_tracks.rds")))
+ship <- rbindlist(lapply(track_files, function(f) readRDS(f)[, .(t, lon = ship_lon, lat = ship_lat)]))
+ship <- unique(ship, by = "t")[order(t)][seq(1, .N, 5)]
 p <- ggplot() +
   geom_tile(data = grid, aes(lon, lat, fill = db), width = grid_n[["lon"]] * 1.02, height = grid_n[["lat"]] * 1.02) +
-  geom_path(data = ship, aes(lon, lat, group = seg), colour = "white", linewidth = 0.15, alpha = 0.6) +
+  geom_path(data = ship, aes(lon, lat), colour = "white", linewidth = 0.15, alpha = 0.7) +
   geom_sf(data = land, fill = "grey85", colour = "grey55", linewidth = 0.2) +
   scale_fill_viridis_c(option = "viridis", limits = lims, oob = scales::squish, name = "School backscatter\nper ping (relative dB)") +
   labs(x = NULL, y = NULL,
@@ -77,23 +81,23 @@ bub[, db := 10 * log10(sb / pings)]
 bub <- bub[is.finite(db)][order(db)]          # strongest cells drawn last
 bub[, db_s := scales::squish(db, lims)]       # same limits as the map, for colour and size
 # same extent for both plots
-ext <- coord_sf(xlim = range(c(grid$lon, bub$lon)) + c(-0.1, 0.1), ylim = range(c(grid$lat, bub$lat)) + c(-0.05, 0.05), expand = FALSE)
+ext <- coord_sf(xlim = map_lon, ylim = map_lat, expand = FALSE)
 ggsave(file.path(base, "13_interpolated_backscatter_map.png"), p + ext, width = 9, height = 7, dpi = 250)
 db_breaks <- pretty(lims, 4); db_breaks <- db_breaks[db_breaks >= lims[1] & db_breaks <= lims[2]]
 pb <- ggplot() +
-  geom_path(data = ship, aes(lon, lat, group = seg), colour = "grey70", linewidth = 0.2) +
+  geom_path(data = ship, aes(lon, lat), colour = "grey30", linewidth = 0.3) +
   geom_sf(data = land, fill = "grey85", colour = "grey55", linewidth = 0.2) +
   geom_point(data = bub, aes(lon, lat, size = db_s, fill = db_s), shape = 21, colour = "grey25", stroke = 0.15, alpha = 0.8) +
   scale_fill_viridis_c(option = "viridis", limits = lims, breaks = db_breaks,
                        name = "School backscatter
 per ping (relative dB)", guide = "legend") +
-  scale_radius(range = c(0.3, 8), limits = lims, breaks = db_breaks,
+  scale_radius(range = c(0.2, 5), limits = lims, breaks = db_breaks,
                         name = "School backscatter
 per ping (relative dB)") +
   ext +
   labs(x = NULL, y = NULL,
        title = sprintf("%s school backscatter along the ship's track, %s - %s", cfg$label, format(min(m$t), "%d %b"), format(max(m$t), "%d %b %Y")),
-       subtitle = sprintf("One bubble per %d-km cell the ship passed through (at least %d pings with schools), at the ship's mean position; not interpolated; same colour limits as the map",
+       subtitle = sprintf("One bubble per %d-km cell the ship passed through (at least %d pings with schools); not interpolated; same colour limits as the map; line = ship track",
                           cell_km, min_pings)) +
   theme(plot.subtitle = element_text(size = 8), panel.background = element_rect(fill = "grey97"))
 ggsave(file.path(base, "13_track_bubble_map.png"), pb, width = 9, height = 7, dpi = 250)
