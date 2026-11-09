@@ -182,6 +182,9 @@ pred_nonnet <- function(f, x) cbind(as.matrix(x[, ..terms_full]) %*% f$x[terms_f
                                     as.matrix(x[, ..terms_full]) %*% f$y[terms_full])
 pn <- pred_nonnet(fs, d); d[, `:=`(qx = sx - pn[, 1], qy = sy - pn[, 2])]
 pn <- pred_nonnet(v_obs$fit, d); d[, `:=`(rx = vx - pn[, 1], ry = vy - pn[, 2])]
+# per-school velocities (m/s): over ground (vx, vy), model current (u, v), through water (sx, sy),
+# and the same after removing the fitted tide and ship terms (rx, ry over ground; qx, qy through water)
+fwrite(d[, .(sid, t, lon, lat, moving, vx, vy, u, v, sx, sy, rx, ry, qx, qy)], file.path(out, "cmems_school_velocities.csv"))
 daily <- d[, .(n = .N, rx = mean(rx), ry = mean(ry), qx = mean(qx), qy = mean(qy), ur = mean(ur), vr = mean(vr)),
            by = day][order(day)]
 daily[, `:=`(dir_obs = bearing_of(rx, ry), dir_swim = bearing_of(qx, qy), dir_cur = bearing_of(ur, vr))]
